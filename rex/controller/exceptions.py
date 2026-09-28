@@ -126,3 +126,46 @@ class ExperimentExecutionExistsError(StateMachineError):
             f"Cannot modify experiment '{experiment_id}' because {execution_count} execution(s) "
             "already exist. Scientific experiment specifications are immutable once execution begins."
         )
+
+
+class MissingExecutionError(StateMachineError):
+    """Raised when an operation references a non-existent execution ID."""
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(f"Execution '{execution_id}' not found.")
+
+
+class MissingResultError(StateMachineError):
+    """Raised when an operation references a non-existent result ID."""
+
+    def __init__(self, result_id: str) -> None:
+        self.result_id = result_id
+        super().__init__(f"Result '{result_id}' not found.")
+
+
+class MissingArtifactError(StateMachineError):
+    """Raised when an operation references a non-existent artifact ID."""
+
+    def __init__(self, artifact_id: str) -> None:
+        self.artifact_id = artifact_id
+        super().__init__(f"Artifact '{artifact_id}' not found.")
+
+
+class InvalidExecutionStateTransitionError(StateMachineError):
+    """Raised when an invalid execution status transition is attempted."""
+
+    def __init__(
+        self,
+        execution_id: str,
+        current_status: str,
+        target_status: str,
+        message: str | None = None,
+    ) -> None:
+        self.execution_id = execution_id
+        self.current_status = current_status
+        self.target_status = target_status
+        super().__init__(
+            message
+            or f"Cannot transition execution '{execution_id}' from '{current_status}' to '{target_status}'."
+        )

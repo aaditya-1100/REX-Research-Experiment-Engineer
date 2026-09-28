@@ -14,7 +14,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from rex.observability.events import freeze_value, unfreeze_value
-from rex.persistence.models import ExperimentModel, HypothesisModel, ResearchRunModel
+from rex.persistence.models import (
+    ArtifactModel,
+    ExecutionModel,
+    ExperimentModel,
+    HypothesisModel,
+    ResearchRunModel,
+    ResultModel,
+)
 
 
 class ResearchState(StrEnum):
@@ -92,6 +99,21 @@ def _gen_experiment_id() -> str:
     return f"exp_{uuid.uuid4().hex[:12]}"
 
 
+def _gen_execution_id() -> str:
+    """Generate a stable, unique execution identifier."""
+    return f"exec_{uuid.uuid4().hex[:12]}"
+
+
+def _gen_result_id() -> str:
+    """Generate a stable, unique result identifier."""
+    return f"res_{uuid.uuid4().hex[:12]}"
+
+
+def _gen_artifact_id() -> str:
+    """Generate a stable, unique artifact identifier."""
+    return f"art_{uuid.uuid4().hex[:12]}"
+
+
 class ExperimentStatus(StrEnum):
     """Explicit, type-safe vocabulary for experiment lifecycle states."""
 
@@ -111,6 +133,43 @@ TERMINAL_EXPERIMENT_STATUSES: frozenset[ExperimentStatus] = frozenset(
         ExperimentStatus.CANCELLED,
     }
 )
+
+
+class ExecutionStatus(StrEnum):
+    """Explicit, type-safe vocabulary for concrete execution attempt states."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+TERMINAL_EXECUTION_STATUSES: frozenset[ExecutionStatus] = frozenset(
+    {
+        ExecutionStatus.COMPLETED,
+        ExecutionStatus.FAILED,
+        ExecutionStatus.CANCELLED,
+    }
+)
+
+
+class ArtifactType(StrEnum):
+    """Classification of persisted execution artifacts."""
+
+    LOG = "log"
+    STDOUT = "stdout"
+    STDERR = "stderr"
+    METRIC = "metric"
+    PLOT = "plot"
+    FIGURE = "figure"
+    CHECKPOINT = "checkpoint"
+    MODEL = "model"
+    DATASET = "dataset"
+    CODE = "code"
+    MANIFEST = "manifest"
+    OUTPUT = "output"
+    OTHER = "other"
 
 
 class MetricDirection(StrEnum):
@@ -775,4 +834,379 @@ class Experiment(BaseModel):
             status=self.status.value,
             created_at=self.created_at,
             parent_experiment_id=self.parent_experiment_id,
+        )
+
+
+class Execution(BaseModel):
+    """Immutable domain representation of a concrete experiment execution attempt.
+
+    Captures execution identity, environment metadata, runtime telemetry,
+    exit codes, and reproducibility fingerprints.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=_gen_execution_id, description="Stable unique execution ID")
+    experiment_id: str = Field(description="ID of associated experiment specification")
+    status: ExecutionStatus = Field(
+        default=ExecutionStatus.PENDING,
+        description="Current lifecycle status of the execution",
+    )
+    started_at: datetime | None = Field(
+        default=None, description="UTC timestamp when execution started"
+    )
+    finished_at: datetime | None = Field(
+        default=None, description="UTC timestamp when execution finished"
+    )
+    command: str = Field(default="", description="Command or entrypoint executed")
+    git_commit: str = Field(default="", description="Git commit hash of code repository")
+    code_hash: str = Field(default="", description="Cryptographic hash of executed code files")
+    dataset_hash: str = Field(default="", description="Cryptographic hash of input datasets")
+    configuration_hash: str = Field(
+        default="", description="Cryptographic hash of execution parameters"
+    )
+    seed: int | None = Field(default=None, description="Random seed used for replication")
+    environment: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Execution environment specification (OS, packages, python version)",
+    )
+    resource_usage: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Resource telemetry (CPU, GPU, memory, duration)",
+    )
+    exit_code: int | None = Field(
+        default=None, description="Process exit code (0 for success, non-zero for failure)"
+    )
+    stdout_artifact_id: str | None = Field(
+        default=None, description="ID of captured stdout artifact"
+    )
+    stderr_artifact_id: str | None = Field(
+        default=None, description="ID of captured stderr artifact"
+    )
+
+    @field_validator("id", "experiment_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Identifier must be a non-empty string.")
+        return cleaned
+
+    @field_validator("stdout_artifact_id", "stderr_artifact_id")
+    @classmethod
+    def _validate_optional_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("environment", "resource_usage", mode="after")
+    @classmethod
+    def _freeze_nested(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def _validate_timezone_aware(cls, v: datetime | None) -> datetime | None:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v.astimezone(UTC)
+
+    @property
+    def is_terminal(self) -> bool:
+        """Indicate whether the execution has reached a terminal state."""
+        return self.status in TERMINAL_EXECUTION_STATUSES
+
+    def with_status(
+        self,
+        new_status: ExecutionStatus | str,
+        exit_code: int | None = None,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        resource_usage: Mapping[str, Any] | None = None,
+    ) -> "Execution":
+        """Return a new immutable Execution with updated lifecycle attributes."""
+        status_enum = (
+            new_status if isinstance(new_status, ExecutionStatus) else ExecutionStatus(new_status)
+        )
+        return Execution(
+            id=self.id,
+            experiment_id=self.experiment_id,
+            status=status_enum,
+            started_at=started_at if started_at is not None else self.started_at,
+            finished_at=finished_at if finished_at is not None else self.finished_at,
+            command=self.command,
+            git_commit=self.git_commit,
+            code_hash=self.code_hash,
+            dataset_hash=self.dataset_hash,
+            configuration_hash=self.configuration_hash,
+            seed=self.seed,
+            environment=self.environment,
+            resource_usage=resource_usage if resource_usage is not None else self.resource_usage,
+            exit_code=exit_code if exit_code is not None else self.exit_code,
+            stdout_artifact_id=self.stdout_artifact_id,
+            stderr_artifact_id=self.stderr_artifact_id,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: ExecutionModel) -> "Execution":
+        """Reconstruct a domain Execution from a SQLAlchemy persistence model."""
+        started_ts = model.started_at
+        if started_ts is not None and started_ts.tzinfo is None:
+            started_ts = started_ts.replace(tzinfo=UTC)
+
+        finished_ts = model.finished_at
+        if finished_ts is not None and finished_ts.tzinfo is None:
+            finished_ts = finished_ts.replace(tzinfo=UTC)
+
+        return cls(
+            id=model.id,
+            experiment_id=model.experiment_id,
+            status=ExecutionStatus(model.status),
+            started_at=started_ts,
+            finished_at=finished_ts,
+            command=model.command,
+            git_commit=model.git_commit,
+            code_hash=model.code_hash,
+            dataset_hash=model.dataset_hash,
+            configuration_hash=model.configuration_hash,
+            seed=model.seed,
+            environment=model.environment_json or {},
+            resource_usage=model.resource_usage_json or {},
+            exit_code=model.exit_code,
+            stdout_artifact_id=model.stdout_artifact_id,
+            stderr_artifact_id=model.stderr_artifact_id,
+        )
+
+    def to_persistence(self) -> ExecutionModel:
+        """Convert domain Execution to a SQLAlchemy persistence model."""
+        return ExecutionModel(
+            id=self.id,
+            experiment_id=self.experiment_id,
+            status=self.status.value,
+            started_at=self.started_at,
+            finished_at=self.finished_at,
+            command=self.command,
+            git_commit=self.git_commit,
+            code_hash=self.code_hash,
+            dataset_hash=self.dataset_hash,
+            configuration_hash=self.configuration_hash,
+            seed=self.seed,
+            environment_json=unfreeze_value(self.environment),
+            resource_usage_json=unfreeze_value(self.resource_usage),
+            exit_code=self.exit_code,
+            stdout_artifact_id=self.stdout_artifact_id,
+            stderr_artifact_id=self.stderr_artifact_id,
+        )
+
+
+class Result(BaseModel):
+    """Immutable domain representation of an empirical observation produced by an execution.
+
+    Anchors machine-measured metrics to an execution run, preventing fabrication of scientific results.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=_gen_result_id, description="Stable unique result ID")
+    execution_id: str = Field(description="ID of associated execution attempt")
+    metric_name: str = Field(
+        description="Name of the recorded metric (e.g. accuracy, loss, latency)"
+    )
+    metric_value: float | None = Field(
+        default=None, description="Optional scalar numeric metric value"
+    )
+    metric_unit: str = Field(default="", description="Unit of measurement (e.g. %, s, GB)")
+    result_data: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Structured result payload (per-class metrics, confusion matrices, distributions)",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="UTC timestamp of result capture",
+    )
+
+    @field_validator("id", "execution_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Identifier must be a non-empty string.")
+        return cleaned
+
+    @field_validator("metric_name")
+    @classmethod
+    def _validate_metric_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Metric name must be a non-empty string.")
+        return cleaned
+
+    @field_validator("result_data", mode="after")
+    @classmethod
+    def _freeze_result_data(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    @field_validator("created_at")
+    @classmethod
+    def _validate_timezone_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v.astimezone(UTC)
+
+    @classmethod
+    def from_persistence(cls, model: ResultModel) -> "Result":
+        """Reconstruct a domain Result from a SQLAlchemy persistence model."""
+        created_ts = model.created_at
+        if created_ts.tzinfo is None:
+            created_ts = created_ts.replace(tzinfo=UTC)
+
+        return cls(
+            id=model.id,
+            execution_id=model.execution_id,
+            metric_name=model.metric_name,
+            metric_value=model.metric_value,
+            metric_unit=model.metric_unit,
+            result_data=model.result_json or {},
+            created_at=created_ts,
+        )
+
+    def to_persistence(self) -> ResultModel:
+        """Convert domain Result to a SQLAlchemy persistence model."""
+        return ResultModel(
+            id=self.id,
+            execution_id=self.execution_id,
+            metric_name=self.metric_name,
+            metric_value=self.metric_value,
+            metric_unit=self.metric_unit,
+            result_json=unfreeze_value(self.result_data),
+            created_at=self.created_at,
+        )
+
+
+class Artifact(BaseModel):
+    """Immutable domain representation of a filesystem artifact produced by or for a research run.
+
+    Captures cryptographic SHA-256 identity, filesystem path, file size, and provenance metadata.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=_gen_artifact_id, description="Stable unique artifact ID")
+    research_run_id: str = Field(description="ID of associated research run")
+    execution_id: str | None = Field(
+        default=None, description="Optional ID of producing execution run"
+    )
+    artifact_type: ArtifactType = Field(
+        default=ArtifactType.OUTPUT, description="Categorization of the artifact"
+    )
+    path: str = Field(description="Storage path or location")
+    content_hash: str = Field(
+        description="Cryptographic SHA-256 hash or digest for integrity verification"
+    )
+    size_bytes: int = Field(default=0, ge=0, description="Artifact size in bytes")
+    metadata: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Structured artifact metadata (MIME type, format, shape, etc.)",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="UTC timestamp of artifact registration",
+    )
+
+    @field_validator("id", "research_run_id", "path", "content_hash")
+    @classmethod
+    def _validate_non_empty_string(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Field must be a non-empty string.")
+        return cleaned
+
+    @field_validator("execution_id")
+    @classmethod
+    def _validate_optional_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("metadata", mode="after")
+    @classmethod
+    def _freeze_metadata(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    @field_validator("artifact_type", mode="before")
+    @classmethod
+    def _coerce_artifact_type(cls, v: Any) -> ArtifactType:
+        if isinstance(v, ArtifactType):
+            return v
+        if isinstance(v, str):
+            val_lower = v.strip().lower()
+            try:
+                return ArtifactType(val_lower)
+            except ValueError:
+                return ArtifactType.OTHER
+        raise TypeError(f"Invalid artifact type: {type(v).__name__}")
+
+    @field_validator("created_at")
+    @classmethod
+    def _validate_timezone_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v.astimezone(UTC)
+
+    @classmethod
+    def from_persistence(cls, model: ArtifactModel) -> "Artifact":
+        """Reconstruct a domain Artifact from a SQLAlchemy persistence model."""
+        created_ts = model.created_at
+        if created_ts.tzinfo is None:
+            created_ts = created_ts.replace(tzinfo=UTC)
+
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            execution_id=model.execution_id,
+            artifact_type=model.artifact_type,
+            path=model.path,
+            content_hash=model.content_hash,
+            size_bytes=model.size_bytes,
+            metadata=model.metadata_json or {},
+            created_at=created_ts,
+        )
+
+    def to_persistence(self) -> ArtifactModel:
+        """Convert domain Artifact to a SQLAlchemy persistence model."""
+        return ArtifactModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            execution_id=self.execution_id,
+            artifact_type=self.artifact_type.value,
+            path=self.path,
+            content_hash=self.content_hash,
+            size_bytes=self.size_bytes,
+            metadata_json=unfreeze_value(self.metadata),
+            created_at=self.created_at,
         )

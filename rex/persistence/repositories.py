@@ -160,6 +160,15 @@ class ExecutionRepository(BaseRepository):
         )
         return self.session.scalars(stmt).all()
 
+    def list_by_run(self, research_run_id: str) -> Sequence[ExecutionModel]:
+        stmt = (
+            select(ExecutionModel)
+            .join(ExperimentModel, ExecutionModel.experiment_id == ExperimentModel.id)
+            .where(ExperimentModel.research_run_id == research_run_id)
+            .order_by(ExecutionModel.started_at.asc().nulls_first())
+        )
+        return self.session.scalars(stmt).all()
+
     def update_status(
         self,
         execution_id: str,
@@ -198,6 +207,16 @@ class ResultRepository(BaseRepository):
         stmt = (
             select(ResultModel)
             .where(ResultModel.execution_id == execution_id)
+            .order_by(ResultModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def list_by_run(self, research_run_id: str) -> Sequence[ResultModel]:
+        stmt = (
+            select(ResultModel)
+            .join(ExecutionModel, ResultModel.execution_id == ExecutionModel.id)
+            .join(ExperimentModel, ExecutionModel.experiment_id == ExperimentModel.id)
+            .where(ExperimentModel.research_run_id == research_run_id)
             .order_by(ResultModel.created_at.asc())
         )
         return self.session.scalars(stmt).all()

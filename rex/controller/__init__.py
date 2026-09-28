@@ -1,20 +1,37 @@
-"""REX Controller Module (REX-005, REX-006, REX-007).
+"""REX Controller Module (REX-005, REX-006, REX-007, REX-008).
 
 Exports the state machine, hypothesis controller, experiment controller,
-domain exceptions, and lifecycle management helpers.
+execution/result/artifact controllers, domain exceptions, and lifecycle management helpers.
 """
 
 from rex.controller.exceptions import (
     ActorAuthorizationError,
     ExperimentExecutionExistsError,
+    InvalidExecutionStateTransitionError,
     InvalidExperimentStateTransitionError,
     InvalidTransitionError,
+    MissingArtifactError,
+    MissingExecutionError,
     MissingExperimentError,
     MissingHypothesisError,
     MissingResearchRunError,
+    MissingResultError,
     StaleStateError,
     StateMachineError,
     TerminalStateError,
+)
+from rex.controller.executions import (
+    ARTIFACT_CREATOR_ACTORS,
+    EXECUTION_CREATOR_ACTORS,
+    EXECUTION_STATUS_UPDATER_ACTORS,
+    RESULT_CREATOR_ACTORS,
+    VALID_EXECUTION_TRANSITIONS,
+    create_execution,
+    create_execution_run,
+    record_artifact,
+    record_result,
+    record_results_batch,
+    update_execution_status,
 )
 from rex.controller.experiments import (
     EXPERIMENT_CREATOR_ACTORS,
@@ -39,29 +56,44 @@ from rex.controller.state_machine import (
 )
 
 __all__ = [
+    "ARTIFACT_CREATOR_ACTORS",
+    "EXECUTION_CREATOR_ACTORS",
+    "EXECUTION_STATUS_UPDATER_ACTORS",
     "EXPERIMENT_CREATOR_ACTORS",
     "EXPERIMENT_STATUS_UPDATER_ACTORS",
     "LEGAL_TRANSITIONS",
+    "RESULT_CREATOR_ACTORS",
+    "VALID_EXECUTION_TRANSITIONS",
     "VALID_EXPERIMENT_TRANSITIONS",
     "ActorAuthorizationError",
     "ExperimentExecutionExistsError",
+    "InvalidExecutionStateTransitionError",
     "InvalidExperimentStateTransitionError",
     "InvalidTransitionError",
+    "MissingArtifactError",
+    "MissingExecutionError",
     "MissingExperimentError",
     "MissingHypothesisError",
     "MissingResearchRunError",
+    "MissingResultError",
     "ResearchStateMachine",
     "StaleStateError",
     "StateMachineError",
     "StateTransitionResult",
     "TerminalStateError",
     "assert_experiment_mutable",
+    "create_execution",
+    "create_execution_run",
     "create_experiment",
     "create_experiment_run",
     "create_hypothesis",
     "create_hypothesis_run",
     "create_research_run",
+    "record_artifact",
+    "record_result",
+    "record_results_batch",
     "transition_run",
+    "update_execution_status",
     "update_experiment_status",
     "update_hypothesis_status",
 ]
