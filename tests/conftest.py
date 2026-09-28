@@ -1,8 +1,8 @@
 """Pytest configuration and shared fixtures for REX tests."""
 
-import os
 import tempfile
 from pathlib import Path
+
 import pytest
 
 
