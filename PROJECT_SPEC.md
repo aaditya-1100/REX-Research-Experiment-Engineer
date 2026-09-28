@@ -26,7 +26,7 @@ REX strictly decouples its system into three logically separated planes:
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                       EXECUTION PLANE                       │
-│  (Deterministic software produces facts: sandboxed code     │
+│  (Deterministic software produces facts: Docker sandboxed   │
 │    execution, metrics, statistical analysis, artifacts)     │
 └──────────────────────────────┬──────────────────────────────┘
                                │ Produces Measurements & Artifacts
@@ -35,6 +35,12 @@ REX strictly decouples its system into three logically separated planes:
 │                       EVIDENCE PLANE                        │
 │  (Deterministic audit & persistence: immutable graph of     │
 │   runs, commits, configs, seeds, outputs, claims, lineage)  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Audited by
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    INDEPENDENT VERIFIER                     │
+│  (Deterministic zero-LLM auditor: rex verify <research_id>) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,19 +51,20 @@ REX strictly decouples its system into three logically separated planes:
 
 ---
 
-## 3. Product Scope
+## 3. Product Scope & Milestones
 
-### V1 Scope: Vertical Slice
+### V1 Scope: Vertical Slice & Auditable Foundation
 - Target: Computational ML/AI research tasks.
 - Input: A clear computational ML/AI research question (e.g., hyperparameter sensitivity, optimizer comparisons, retrieval chunking trade-offs, regularization impact).
-- Workflow:
+- Core Lifecycle:
   1. Understand question.
   2. Formulate testable hypothesis and immutable experiment specification.
   3. Generate experiment code strictly bound to the specification contract.
-  4. Execute experiment in a sandboxed, isolated environment.
+  4. Execute experiment in an isolated, sandboxed Docker container (with fail-safe fallback).
   5. Deterministically capture execution metrics, logs, outputs, and hardware/environment state.
-  6. Record complete machine-readable provenance in an evidence store.
+  6. Record complete machine-readable provenance in SQLAlchemy/SQLite evidence store.
   7. Deterministically verify the run and claims using `rex verify`.
+  8. Prove tamper resistance: intentional corruption of metrics or claims causes `rex verify` to fail with a non-zero exit code.
 
 ### V2 Scope: Autonomous Iterative Loop
 - Multi-step research state machine with autonomous closed-loop transitions.
@@ -68,11 +75,11 @@ REX strictly decouples its system into three logically separated planes:
   - **STOP**: terminate when the compute budget is reached or further experimentation is unjustified.
 
 ### V3 Scope: Scaled Research System
-- Scholarly literature retrieval (ArXiv / OpenAlex / Semantic Scholar) with mandatory grounding (no hallucinated citations).
+- Scholarly literature retrieval (ArXiv / OpenAlex / Semantic Scholar) with mandatory grounding and strict prompt injection barriers (no hallucinated citations, no untrusted instructions).
 - Multi-hypothesis branching trees with adaptive compute allocation.
 - Structured long-term research memory across projects.
 - End-to-end evidence-grounded research report generation.
-- Full interactive lineage visualization and replayability.
+- Full interactive research workstation UI (React/Vite).
 
 ---
 
@@ -81,13 +88,13 @@ REX strictly decouples its system into three logically separated planes:
 REX implements the research lifecycle as an explicit, deterministic state machine driven by the `ResearchController`. The system never runs as an unconstrained recursive LLM dialogue.
 
 ### Lifecycle States:
-1. `INITIALIZE`: Parse research question, allocate research ID, initialize experiment workspace and evidence database.
+1. `INITIALIZE`: Parse research question, allocate research ID, initialize experiment workspace, database, and budget tracker.
 2. `UNDERSTAND`: Problem decomposition into independent/dependent variables, constraints, evaluation criteria, and known baselines.
-3. `LITERATURE`: Ground question in real scholarly literature (V3; stubbed/cached in V1).
+3. `LITERATURE`: Ground question in real scholarly literature (V3; stubbed/mocked in V1).
 4. `HYPOTHESES`: Formulate structured testable hypotheses with explicit falsification conditions.
 5. `DESIGN`: Create an immutable `ExperimentSpec` contract defining variables, baselines, metrics, repetitions, seeds, and statistical tests.
 6. `IMPLEMENT`: Coding agent translates `ExperimentSpec` into executable Python code and dependencies without modifying the specification contract.
-7. `EXECUTE`: Execution engine runs code in a sandboxed environment with strict timeouts, capturing stdout, stderr, metrics, and resource telemetry.
+7. `EXECUTE`: Execution engine runs code in a sandboxed Docker container with strict timeouts, capturing stdout, stderr, metrics, and resource telemetry.
 8. `VERIFY`: Deterministic sanity verification of run outputs, format compliance, and artifact creation before analysis.
 9. `ANALYZE`: Deterministic calculation of descriptive statistics, confidence intervals, bootstrap tests, effect sizes, and diagnostic plots.
 10. `CRITIQUE`: Research critic evaluates baseline fairness, controls, leakage, sample size, seed variance, and design adherence.
@@ -97,85 +104,91 @@ REX implements the research lifecycle as an explicit, deterministic state machin
 
 ---
 
-## 5. Core Subsystems & Responsibilities
+## 5. Core Subsystems & Modular Architecture
 
-| Subsystem | Plane | Primary Responsibility |
-| :--- | :--- | :--- |
-| **Research Controller** | Orchestration | Owns lifecycle state machine, transitions, experiment scheduling, budget limits, checkpointing, and recovery. |
-| **Problem Investigator** | Reasoning | Decomposes problem into variables, constraints, baselines, and evaluation criteria. |
-| **Literature Agent** | Reasoning | Queries scholarly databases; strictly verifies paper metadata and citations; extracts empirical baselines. |
-| **Hypothesis Engine** | Reasoning | Formulates structured hypotheses with expected direction, mechanism, falsification criteria, and required evidence. |
-| **Experiment Designer** | Reasoning | Emits immutable `ExperimentSpec` (contract specifying variables, controls, metrics, seeds, analyses). |
-| **Coding Agent** | Reasoning | Writes standalone executable experiment scripts adhering to `ExperimentSpec`; fixes execution errors without fabricating results. |
-| **Execution Engine** | Execution | Runs experiments in isolated subprocesses/sandboxes with timeouts, CPU/RAM limits, and full telemetry capture. |
-| **Analysis Engine** | Execution | Deterministically computes metrics, mean/median, standard error, 95% CIs, Cohen's $d$, ANOVA/t-tests, and generates plots. |
-| **Research Critic** | Reasoning | Evaluates methodological validity (leakage, confounding, fairness, seed dependence) and outputs structured severity alerts (`CRITICAL`, `WARNING`, `INFO`). |
-| **Evidence Engine** | Evidence | Maintains the relational/graph provenance database linking claims, results, runs, code commits, configs, and datasets. |
-| **Research Memory** | Evidence | Structured, append-only repository of hypotheses, experiment outcomes, negative results, decisions, and lessons. |
-| **Independent Verifier** | Evidence | Deterministic auditor (`rex verify`) inspecting stored disk artifacts to prove every claim is backed by uncorrupted raw data. |
+REX is structured as a modular monolith in Python with clear subsystem boundaries:
+
+```text
+rex/
+├── domain/          # Core domain models (ResearchRun, Hypothesis, ExperimentSpec, Execution, etc.)
+├── controller/      # State machine, research controller, budget engine
+├── agents/          # Reasoning plane: investigator, hypothesis, designer, coder, critic
+├── llm/             # LLM provider abstractions (Gemini, Groq, OpenAI, MockLLMProvider)
+├── execution/       # Execution plane: Docker runner, sandbox, workspace, environment
+├── analysis/        # Execution plane: metrics, statistics, bootstrap, plots
+├── evidence/        # Evidence plane: graph, lineage, verifier, claims
+├── persistence/     # SQLite database, SQLAlchemy models, Alembic, repositories
+├── literature/      # Scholarly providers: OpenAlex, Semantic Scholar, arXiv
+├── reporting/       # Research report generator
+├── observability/   # Structured events, JSON logging, tracing
+├── config/          # Typed application settings (Pydantic BaseSettings)
+├── api/             # FastAPI local REST & SSE endpoints
+└── cli/             # Typer CLI commands (rex research, rex verify, etc.)
+```
 
 ---
 
 ## 6. Directory Layout & Append-Only Invariants
 
-Every experiment is assigned an immutable sequential ID (`EXP-0001`, `EXP-0002`, etc.) and structured on disk as:
+Every research run organizes workspaces and artifacts under structured directories:
 
 ```
-experiments/
-└── EXP-0001/
-    ├── experiment.json       # Immutable ExperimentSpec contract
-    ├── metadata.json         # Timestamps, parent lineage, hypothesis link
-    ├── source/               # Source code executed for the experiment
-    │   ├── run.py
-    │   └── requirements.txt
-    ├── config/               # Parameter configs and hyperparameter grids
-    │   └── config.json
-    ├── environment/          # Python version, pip freeze, OS, Git commit hash
-    │   └── env_dump.json
-    ├── executions/           # Individual execution runs (RUN-XXXX)
-    │   └── RUN-0001/
-    │       ├── run_meta.json # Seed, start/end time, exit code, CPU/RAM usage
-    │       ├── stdout.log
-    │       ├── stderr.log
-    │       └── metrics.json  # Raw metric outputs produced by the script
-    ├── results/              # Aggregated raw result matrices
-    ├── analysis/             # Deterministic summary stats, p-values, CI tables
-    │   └── stats.json
-    └── artifacts/            # Output plots, checkpoints, logs
-        └── figure_1.png
+data/
+├── database/
+│   └── rex.db               # SQLite database with SQLAlchemy models
+└── runs/
+    └── <research_id>/
+        └── <experiment_id>/
+            └── <run_id>/
+                ├── source/         # Snapshotted source code
+                │   ├── run.py
+                │   └── requirements.txt
+                ├── config/         # JSON execution configuration & seed
+                │   └── config.json
+                ├── environment/    # Runtime, pip freeze, Git commit, OS
+                │   └── env_dump.json
+                ├── logs/           # Captured outputs
+                │   ├── stdout.log
+                │   └── stderr.log
+                ├── results/        # Raw execution outputs
+                │   └── metrics.json
+                ├── analysis/       # Deterministic statistics
+                │   └── stats.json
+                └── artifacts/      # Plots, checkpoints, tables
+                    └── figure_1.png
 ```
 
 ### Invariants:
 1. **Append-Only History**: Historical runs are never overwritten or deleted.
-2. **Deterministic Hashes**: Code hash, config hash, and dataset hash are computed via SHA-256 and stored with every run.
+2. **Deterministic Hashes**: Code hash, config hash, and dataset hash are computed via SHA-256 and stored with every execution and artifact.
 3. **Execution Idempotence**: A run record contains complete metadata necessary to execute the exact command again under identical seed/parameter settings.
 
 ---
 
 ## 7. Evidence Graph Entities and Relationships
 
-REX persists the research record as an explicit entity-relationship model in SQLite + JSON.
+REX persists the research record as an explicit entity-relationship model in SQLite via SQLAlchemy.
 
 ### Entities:
-- `Hypothesis`
-- `Experiment`
-- `CodeVersion`
-- `Configuration`
-- `Dataset`
-- `Run`
-- `Result`
-- `Analysis`
-- `Figure`
-- `Claim`
-- `LiteratureSource`
+- `research_runs`
+- `hypotheses`
+- `experiments`
+- `executions`
+- `results`
+- `analyses`
+- `artifacts`
+- `literature_sources`
+- `claims`
+- `evidence_links`
+- `events`
 
 ### Relationships:
-- `CLAIM` $\xrightarrow{\text{SUPPORTED_BY}}$ `RESULT`
-- `RESULT` $\xrightarrow{\text{PRODUCED_BY}}$ `RUN`
-- `RUN` $\xrightarrow{\text{INSTANCE_OF}}$ `EXPERIMENT`
-- `RUN` $\xrightarrow{\text{EXECUTED_CODE}}$ `CODE_VERSION`
-- `RUN` $\xrightarrow{\text{USED_DATASET}}$ `DATASET`
-- `RUN` $\xrightarrow{\text{USED_CONFIGURATION}}$ `CONFIGURATION`
+- `CLAIM` $\xrightarrow{\text{SUPPORTED_BY}}$ `RESULT` / `ANALYSIS` / `LITERATURE_SOURCE`
+- `RESULT` $\xrightarrow{\text{PRODUCED_BY}}$ `EXECUTION`
+- `EXECUTION` $\xrightarrow{\text{INSTANCE_OF}}$ `EXPERIMENT`
+- `EXECUTION` $\xrightarrow{\text{EXECUTED_CODE}}$ `CODE_VERSION`
+- `EXECUTION` $\xrightarrow{\text{USED_DATASET}}$ `DATASET`
+- `EXECUTION` $\xrightarrow{\text{USED_CONFIGURATION}}$ `CONFIGURATION`
 - `ANALYSIS` $\xrightarrow{\text{DERIVED_FROM}}$ `RESULT`
 - `FIGURE` $\xrightarrow{\text{GENERATED_FROM}}$ `RESULT` / `ANALYSIS`
 - `REPORT` $\xrightarrow{\text{CONTAINS}}$ `CLAIM`
@@ -185,15 +198,15 @@ REX persists the research record as an explicit entity-relationship model in SQL
 ## 8. Independent Verification Criteria (`rex verify`)
 
 The verifier is a zero-LLM, 100% deterministic auditing tool that verifies:
-1. **Claim Grounding**: Every numerical assertion in a claim maps directly to a verified `Result` entry.
-2. **Result Provenance**: Every `Result` references a valid `Run` ID.
-3. **Run Integrity**: Every `Run` has an intact exit code (0), stdout, stderr, run metadata, and valid start/end timestamps.
+1. **Claim Grounding**: Every numerical assertion in a claim maps directly to a verified `Result` or `Analysis` entry.
+2. **Result Provenance**: Every `Result` references a valid `Execution` ID.
+3. **Run Integrity**: Every `Execution` has an intact exit code (0), stdout, stderr, run metadata, and valid start/end timestamps.
 4. **Code Traceability**: The source code directory for the experiment matches the recorded `CodeVersion` SHA-256 hash.
 5. **Configuration Match**: The execution arguments match the `ExperimentSpec` contract.
 6. **Seed Traceability**: Random seeds are explicitly recorded.
-7. **Numerical Consistency**: Stored metric files (`metrics.json`) match the values recorded in the evidence database byte-for-byte.
+7. **Numerical Consistency**: Stored metric files (`metrics.json`) match the values recorded in the database byte-for-byte.
 8. **Analysis Derivation**: Statistical values (means, CIs, p-values) match recalculated statistics over raw run outputs.
-9. **Artifact Integrity**: Generated figures and tables exist on disk with valid hashes.
+9. **Artifact Integrity**: Generated figures and tables exist on disk with valid SHA-256 hashes.
 10. **Append-Only Preservation**: No historical runs have missing IDs or tampered sequence numbers.
 
 Output artifacts:
@@ -202,21 +215,29 @@ Output artifacts:
 
 ---
 
-## 9. Security and Execution Sandboxing
+## 9. Security, Sandboxing, & Guardrails
 
-Generated experiment code is treated as untrusted:
-- **Process Isolation**: Experiments are executed in isolated subprocesses with decoupled process groups.
-- **Resource Constraints**: Strict wall-clock timeouts (default 300s), memory limits, and process cleanup on termination (killing child processes).
-- **Filesystem Confinement**: Experiment scripts only write to their designated run execution directory.
-- **Dependency Guard**: Permitted package allowlists; no arbitrary system package installations.
+### 9.1 Docker Container Security Boundary
+Generated experiment code is untrusted. The primary execution environment is an isolated Docker container with:
+- Non-root user execution;
+- Explicit CPU cores limit;
+- Explicit memory limit (e.g. 2048 MB);
+- Wall-clock timeout (e.g. 300s);
+- Read-only root filesystem with write access restricted to assigned workspace;
+- Output size limits;
+- **Network disabled by default** (`network_mode="none"`);
+- No host Docker socket access;
+- No host SSH keys or cloud credentials mounted;
+- Environment variable sanitization.
 
----
+**Fail-Safe Policy**: If Docker is unavailable in non-testing mode, REX fails closed with a clear warning rather than silently executing untrusted code on the host.
 
-## 10. Anti-Drift Guardrails
+### 9.2 Prompt Injection & Literature Sanitization
+- Retrieved literature content (OpenAlex, Semantic Scholar, arXiv) is untrusted data.
+- Never concatenated into privileged instructions; clearly quarantined in data delimiters.
+- Cannot grant agent capabilities, alter budgets, or initiate execution commands.
 
-The following are strictly out of scope and prohibited:
-- Chatbot interfaces or general-purpose conversation loops.
-- Paper writing engines that generate prose without empirical code execution.
-- LLMs performing internal arithmetic or statistical evaluations without execution code.
-- Hallucinated citations or unverified web search summaries.
-- Mocking or faking experimental results during non-testing operations.
+### 9.3 Capability-Based Permissions & Research Budgets
+- Agents are restricted to capability sets matching their lifecycle state (least privilege).
+- Strict budgets: `max_experiments`, `max_runtime_seconds`, `max_llm_calls`, `max_token_cost`, and `max_artifact_size`.
+- Budget exhaustion terminates autonomous loops and demands owner intervention.

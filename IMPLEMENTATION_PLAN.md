@@ -2,163 +2,154 @@
 
 ## 1. Overview & Strategy
 
-REX is implemented with strict engineering discipline. Rather than attempting a massive, untested code dump, we follow an iterative, test-driven approach centered on verifiable vertical slices.
+REX is implemented with strict engineering discipline and ticket-driven development based on [`05_Feature_Tickets.md`](05_Feature_Tickets.md).
 
-- **V1 Goal**: Complete vertical slice. Input a research question $\to$ create experiment specification $\to$ generate code $\to$ execute in sandbox $\to$ record telemetry & metrics $\to$ register in evidence graph $\to$ deterministically audit via `rex verify`.
-- **V2 Goal**: Closed-loop autonomous research. Critic agent $\to$ autonomous decision (`REFINE`, `REPLICATE`, `PIVOT`, `STOP`) $\to$ multi-step experiment refinement with lineage tracking.
-- **V3 Goal**: Literature grounding, multi-hypothesis exploration branches, structured research memory, and full evidence-backed scientific report generation.
+Rather than attempting speculative infrastructure or skipping ahead to LLM conversational agents or UI screens, we follow an iterative, test-driven approach centered on verified vertical slices:
+
+- **Milestone 1 — Evidence-Capable Execution Core (V1 MVP)**: 
+  Domain models $\to$ configuration $\to$ SQLAlchemy/SQLite persistence $\to$ state machine $\to$ experiment specification $\to$ Docker execution/sandbox $\to$ metric capture $\to$ deterministic statistics $\to$ evidence graph $\to$ `rex verify` $\to$ evidence corruption tests.
+- **Milestone 2 — Research Reasoning Agents**: 
+  Problem investigator $\to$ hypothesis engine $\to$ experiment designer $\to$ coding agent $\to$ `MockLLMProvider` / live LLM providers (Gemini, Groq, OpenAI).
+- **Milestone 3 — Autonomous Research Closed-Loop (V2)**: 
+  Research critic $\to$ decision engine (`REFINE`, `REPLICATE`, `PIVOT`, `STOP`) $\to$ autonomous iterative experimentation with full parent-child lineage.
+- **Milestone 4 — Grounded Scholarly Literature (V3)**: 
+  OpenAlex / Semantic Scholar / arXiv adapters $\to$ literature prompt injection barrier.
+- **Milestone 5 — Research Workstation Frontend & Evaluation**: 
+  FastAPI application API $\to$ React/Vite research workstation UI $\to$ baseline-vs-REX comparative empirical evaluation.
 
 ---
 
-## 2. Phased Roadmap
+## 2. Epics & Ticket Roadmap (from `05_Feature_Tickets.md`)
 
 ```mermaid
-flowchart LR
-    P1["Phase 1:\nCore Contracts & State Machine"] --> P2["Phase 2:\nSandbox & Execution Plane"]
-    P2 --> P3["Phase 3:\nEvidence Plane & Persistence"]
-    P3 --> P4["Phase 4:\nDeterministic Analysis Engine"]
-    P4 --> P5["Phase 5:\nReasoning Plane & Agents"]
-    P5 --> P6["Phase 6:\nV1 End-to-End Slice"]
-    P6 --> P7["Phase 7:\nIndependent Verifier"]
-    P7 --> P8["Phase 8:\nV2 Closed-Loop Research"]
+flowchart TD
+    subgraph E0["Epic 0: Project Foundation"]
+        T01["REX-001 Skeleton"] --> T02["REX-002 Config System"]
+        T02 --> T03["REX-003 Logging & Events"]
+    end
+
+    subgraph E1["Epic 1: Persistence & Domain Models"]
+        T04["REX-004 SQLAlchemy/SQLite"] --> T05["REX-005 ResearchRun Model"]
+        T05 --> T06["REX-006 Hypothesis Model"]
+        T06 --> T07["REX-007 ExperimentSpec Model"]
+        T07 --> T08["REX-008 Execution/Result/Artifact Models"]
+    end
+
+    subgraph E2["Epic 2: Controller & State Machine"]
+        T09["REX-009 State Machine"] --> T10["REX-010 Research Controller"]
+        T10 --> T11["REX-011 Budget Guard"]
+    end
+
+    subgraph E3["Epic 3: LLM & Reasoning Agents"]
+        T12["REX-012 LLM Provider Interface"] --> T13["REX-013 Investigator"]
+        T13 --> T14["REX-014 Hypothesis Agent"]
+        T14 --> T15["REX-015 Experiment Designer"]
+        T15 --> T16["REX-016 Coding Agent"]
+    end
+
+    subgraph E4["Epic 4: Execution Sandbox"]
+        T17["REX-017 Docker Worker"] --> T18["REX-018 Workspace Manager"]
+        T18 --> T19["REX-019 Environment Capture"]
+    end
+
+    subgraph E5["Epic 5: Deterministic Analysis"]
+        T20["REX-020 Metric Extraction"] --> T21["REX-021 Statistics Engine"]
+        T21 --> T22["REX-022 Plotting Artifacts"]
+    end
+
+    subgraph E6["Epic 6: Evidence & Verification"]
+        T23["REX-023 Evidence Graph"] --> T24["REX-024 Claim Model"]
+        T24 --> T25["REX-025 Artifact Hashing"]
+        T25 --> T26["REX-026 rex verify"]
+        T26 --> T27["REX-027 rex reproduce"]
+    end
+
+    E0 --> E1
+    E1 --> E2
+    E2 --> E3
+    E3 --> E4
+    E4 --> E5
+    E5 --> E6
 ```
-
-### Phase 1: Core Contracts, Data Models & State Machine
-- **Objectives**:
-  - Implement Pydantic models for all entities: `ResearchSession`, `Hypothesis`, `ExperimentSpec`, `RunRecord`, `MetricResult`, `AnalysisResult`, `Claim`, `VerificationReport`.
-  - Implement the deterministic Finite State Machine (`rex.core.state_machine`) with explicit state transitions, transition guards, and failure traps.
-  - Implement structured event logging (`rex.core.events`) emitting standard lifecycle events (`RESEARCH_STARTED`, `EXECUTION_STARTED`, etc.).
-  - Implement cryptographic hashing utilities (`rex.utils.hashing`) for source trees, configurations, and artifact files (SHA-256).
-
-### Phase 2: Execution Plane & Sandboxing
-- **Objectives**:
-  - Implement `rex.planes.execution.sandbox`: Subprocess management, process group isolation (Windows `CREATE_NEW_PROCESS_GROUP` / POSIX `setsid`), wall-clock timeouts, peak memory measurement (via `psutil`), and clean termination.
-  - Implement `rex.planes.execution.environment`: Capture Python runtime, installed package versions, OS metadata, CPU/GPU hardware details, and current Git commit SHA.
-  - Implement `rex.planes.execution.runner`: Orchestrate execution of an experiment run, generate sequential `RUN-XXXX` IDs, stream stdout/stderr, and capture raw `metrics.json`.
-
-### Phase 3: Evidence Plane & Filesystem Persistence
-- **Objectives**:
-  - Implement `rex.storage.experiment_fs`: Enforce append-only filesystem conventions (`experiments/EXP-XXXX/executions/RUN-XXXX/`). Guarantee historical records are never mutated.
-  - Implement `rex.planes.evidence.store`: Local SQLite relational database with strict foreign keys, indexing, and JSON columns for entity storage.
-  - Implement `rex.planes.evidence.graph`: Relational edge management (`SUPPORTED_BY`, `PRODUCED_BY`, `EXECUTED_CODE`, `DERIVED_FROM`, etc.).
-
-### Phase 4: Deterministic Analysis Engine
-- **Objectives**:
-  - Implement `rex.planes.execution.analyzer`:
-    - Descriptive stats: sample mean, median, standard deviation, standard error, IQR.
-    - Inferential stats: two-sample Welch's $t$-test, paired $t$-test, Mann-Whitney $U$.
-    - Confidence intervals: Student's $t$ 95% CI and BCa bootstrap intervals.
-    - Effect sizes: Cohen's $d$, Hedge's $g$.
-    - Deterministic visualization: Matplotlib plots (learning curves, ablation bar charts, seed distributions) saved to `artifacts/` along with underlying data JSON.
-
-### Phase 5: Reasoning Plane & Agent Architecture
-- **Objectives**:
-  - Implement `rex.planes.reasoning.llm_provider`: Uniform provider interface supporting Gemini, Groq, OpenAI, and a deterministic `MockLLMProvider` for offline test suites.
-  - Implement `ProblemInvestigator`: Deconstruct research question into testable variables and evaluation metrics.
-  - Implement `HypothesisEngine`: Formulate structured hypotheses with explicit falsification conditions.
-  - Implement `ExperimentDesigner`: Output validated `ExperimentSpec` contracts.
-  - Implement `CodingAgent`: Generate standalone `source/run.py` script adhering strictly to `ExperimentSpec`.
-
-### Phase 6: V1 Vertical Slice Integration & CLI
-- **Objectives**:
-  - Assemble end-to-end pipeline: Question $\to$ Spec $\to$ Code $\to$ Execution $\to$ Results $\to$ Provenance Graph.
-  - Implement Click/Typer CLI commands: `rex research`, `rex status`, `rex inspect`.
-  - Validate with a real computational ML task (e.g., comparing learning rate schedulers or optimization algorithms on a synthetic/standard benchmark).
-
-### Phase 7: Independent Verifier (`rex verify`)
-- **Objectives**:
-  - Implement zero-LLM deterministic verification:
-    - Trace every `Claim` to its supporting `Result`.
-    - Trace every `Result` to its `Run` on disk.
-    - Recompute SHA-256 hashes of code, configuration, and artifacts and match against stored records.
-    - Recalculate statistical values from raw metrics and assert equivalence.
-    - Flag any disconnected, fabricated, or tampered claims.
-  - Generate `verification_report.json` and human-readable `verification_report.md`.
-  - Add mutation/tamper tests: deliberately modify a metric or claim and verify `rex verify` catches it.
-
-### Phase 8: V2 Closed-Loop Research
-- **Objectives**:
-  - Implement `ResearchCritic`: Audit experimental design and results across baseline fairness, sample size, seed dependence, and data leakage.
-  - Implement autonomous `DECIDE` state transitions: `REFINE`, `REPLICATE`, `PIVOT`, `STOP`.
-  - Implement iterative multi-experiment campaigns with full parent-child lineage tracking.
 
 ---
 
-## 3. Concrete V1 Implementation Plan
+## 3. Detailed Milestone 1 Implementation Plan (V1 Foundation)
 
-The V1 milestone establishes the core truth-producing pipeline. Here are the precise steps for V1:
+Milestone 1 establishes the deterministic research core. Execution follows ticket dependencies strictly:
 
-| Step | Component | Action | Verification |
-| :---: | :--- | :--- | :--- |
-| **1.1** | `rex.core.models` | Define Pydantic models for `ExperimentSpec`, `RunRecord`, `MetricResult`, `EvidenceEntity`. | Unit tests passing serialization/deserialization. |
-| **1.2** | `rex.utils.hashing` | Implement SHA-256 directory and file hashing. | Unit test verifying identical hash for identical trees. |
-| **1.3** | `rex.storage.experiment_fs` | Build append-only directory manager (`experiments/EXP-XXXX/`). | File system tests verifying non-overwriting behavior. |
-| **1.4** | `rex.planes.execution.sandbox` | Build subprocess runner with timeout, memory tracking, and process cleanup. | Test running toy scripts (success, exit 1, timeout, memory cap). |
-| **1.5** | `rex.planes.execution.environment`| Build environment inspector (Python, pip freeze, Git commit, CPU). | Test environment snapshot JSON output. |
-| **1.6** | `rex.planes.evidence.store` | Build SQLite store and edge recording. | SQL tests inserting and querying runs and evidence edges. |
-| **1.7** | `rex.planes.execution.analyzer`| Implement mean, std, 95% CI, Welch's $t$-test, Cohen's $d$, and plot generation. | Stat unit tests against known SciPy reference values. |
-| **1.8** | `rex.planes.reasoning` | Build MockLLMProvider and real LLM providers (Gemini/OpenAI) + Designer + Coder. | Unit tests checking prompt generation and schema parsing. |
-| **1.9** | `rex.core.controller` | Connect FSM from `INITIALIZE` $\to$ `COMPLETE`. | Integration test running end-to-end pipeline with mock and real execution. |
-| **1.10**| `rex.planes.evidence.verifier`| Build `rex verify` logic and report output. | Tamper test: corrupt `metrics.json` and ensure audit fails. |
-| **1.11**| `rex.cli` | Wire up CLI commands (`research`, `status`, `inspect`, `verify`). | CLI test verifying command output and exit codes. |
+| Step | Ticket | Component | Action | Verification |
+| :---: | :---: | :--- | :--- | :--- |
+| **1.1** | `REX-001` | Repository & Packages | Update `pyproject.toml` with `fastapi`, `uvicorn`, `sqlalchemy`, `alembic`, `docker`, `typer`. Setup package structure. | `uv pip install -e ".[dev]"` passes. |
+| **1.2** | `REX-002` | `rex.config.settings` | Implement typed Pydantic `Settings` for DB, paths, Docker, LLM, limits. | Unit tests loading defaults & env overrides. |
+| **1.3** | `REX-003` | `rex.observability.events` | Implement structured event logging and event persistence models. | Unit tests logging lifecycle events. |
+| **1.4** | `REX-004` | `rex.persistence.database` | Setup SQLAlchemy 2.0 engine, SessionLocal, Base model, and Alembic migrations. | Tests verifying SQLite DB creation and tables. |
+| **1.5** | `REX-005` | `rex.domain.research` | Implement `ResearchRun` domain & SQLAlchemy models with status transitions. | Tests creating runs and validating transitions. |
+| **1.6** | `REX-006` | `rex.domain.hypothesis` | Implement `Hypothesis` domain model with falsification conditions. | Tests serialization and persistence. |
+| **1.7** | `REX-007` | `rex.domain.experiment` | Implement immutable `ExperimentSpec` contract and parent/child tracking. | Tests asserting immutability after execution starts. |
+| **1.8** | `REX-008` | `rex.domain.execution` | Implement `Execution`, `Result`, `Analysis`, `Artifact` models. | Tests verifying foreign key relationships. |
+| **1.9** | `REX-009` | `rex.controller.state_machine` | Implement 13-state research FSM with transition guards. | Tests covering all valid and invalid transitions. |
+| **1.10**| `REX-010` | `rex.controller.research_controller` | Implement orchestrator driving state transitions and experiment scheduling. | Test starting, pausing, and resuming runs. |
+| **1.11**| `REX-011` | `rex.controller.budgets` | Implement budget tracking (experiments, runtime, LLM calls). | Tests verifying state machine halts at budget cap. |
+| **1.12**| `REX-017` | `rex.execution.docker_runner` | Implement Docker execution worker with non-root, quotas, timeout, disabled network, and fail-safe fallback. | Test running mock execution scripts safely. |
+| **1.13**| `REX-018` | `rex.execution.workspace` | Implement `WorkspaceManager` generating unique `data/runs/<research_id>/...` workspaces. | Tests verifying non-overwriting append-only paths. |
+| **1.14**| `REX-019` | `rex.execution.environment` | Capture Python, pip freeze, Git commit SHA, and hardware info into `env_dump.json`. | Tests verifying captured environment snapshot. |
+| **1.15**| `REX-020` | `rex.analysis.metrics` | Deterministic parsing and schema validation of `metrics.json`. | Tests rejecting malformed outputs. |
+| **1.16**| `REX-021` | `rex.analysis.statistics` | Implement SciPy stats (mean, std, 95% CIs, Welch's t-test, Cohen's d). | Tests verifying numerical output against SciPy reference. |
+| **1.17**| `REX-023` | `rex.evidence.graph` | Implement bidirectional evidence graph (`evidence_links` table). | Tests inserting and querying evidence edges. |
+| **1.18**| `REX-024` | `rex.evidence.claims` | Implement `Claim` model requiring supporting evidence links. | Tests rejecting claims without evidence. |
+| **1.19**| `REX-025` | `rex.evidence.hashing` | SHA-256 content hashing for code, configs, datasets, and artifacts. | Tests verifying hash changes on file tampering. |
+| **1.20**| `REX-026` | `rex.evidence.verifier` | Build `rex verify` deterministic auditor and markdown/json reports. | Positive test: valid research run verifies cleanly. |
+| **1.21**| `REX-042` | `tests/fixtures/toy_benchmark` | Deterministic toy ML task with known baselines. | Integration test running end-to-end toy experiment. |
+| **1.22**| `REX-043` | `tests/security/test_corruption` | Deliberately alter metrics, hashes, or claims and confirm `rex verify` fails. | Tamper tests: 100% detection rate. |
 
 ---
 
 ## 4. Required Dependencies
 
-All dependencies are standard, production-ready, and pinned for reproducibility.
+Updated to align with `02_Technical_Architecture.md` and feature tickets:
 
 ### Core Runtime Dependencies
-- `pydantic >= 2.6.0`: Strict schema definition, immutable data models, JSON serialization.
-- `click >= 8.1.7`: Deterministic CLI parsing, subcommands, and parameter validation.
-- `numpy >= 1.26.0`: Numerical array manipulation and metric processing.
-- `scipy >= 1.12.0`: Deterministic statistical testing (Welch's $t$, Mann-Whitney, bootstrap, CIs).
-- `matplotlib >= 3.8.0`: Headless plotting (`Agg` backend) for deterministic figure generation.
-- `psutil >= 5.9.8`: Process resource tracking, child process tree termination, memory monitoring.
-- `rich >= 13.7.1`: Clean terminal tables, status spinners, and structured logs.
-- `httpx >= 0.27.0`: Robust async/sync HTTP client for LLM API integrations (Gemini, Groq, OpenAI).
-
-### Standard Library Components Utilized
-- `sqlite3`: Zero-daemon, transactional, local relational database for evidence graph.
-- `subprocess`: Process isolation and execution management.
-- `hashlib`: Cryptographic SHA-256 computation.
-- `pathlib`: Cross-platform path manipulations.
-- `typing`: Type annotations.
+- `pydantic>=2.6.0`: Strict schema definition, immutable data models, JSON serialization.
+- `typer>=0.12.0`: Deterministic CLI parsing, subcommands, and parameter validation.
+- `click>=8.1.7`: Underlying CLI engine.
+- `fastapi>=0.110.0` & `uvicorn>=0.28.0`: REST API and Server-Sent Events (SSE).
+- `sqlalchemy>=2.0.0`: Relational ORM and database engine.
+- `alembic>=1.13.0`: Database schema migrations.
+- `docker>=7.0.0`: Isolated containerized experiment execution worker.
+- `numpy>=1.26.0`: Numerical array manipulation and metric processing.
+- `scipy>=1.12.0`: Deterministic statistical testing (Welch's $t$, Mann-Whitney, bootstrap, CIs).
+- `matplotlib>=3.8.0`: Headless plotting (`Agg` backend) for deterministic figure generation.
+- `psutil>=5.9.8`: Process resource tracking, memory monitoring, and process tree cleanup.
+- `rich>=13.7.1`: Clean terminal tables, status spinners, and structured logs.
+- `httpx>=0.27.0`: Async/sync HTTP client for LLM and literature APIs.
 
 ### Development & Test Dependencies
-- `pytest >= 8.0.0`: Test runner.
-- `pytest-cov >= 4.1.0`: Code coverage reporting.
-- `pytest-mock >= 3.12.0`: Mocking utilities for unit tests.
-- `ruff >= 0.3.0`: High-speed linting and formatting.
+- `pytest>=8.0.0`: Test runner.
+- `pytest-cov>=4.1.0`: Code coverage reporting.
+- `pytest-mock>=3.12.0`: Mocking utilities for unit tests.
+- `ruff>=0.3.0`: High-speed linting and formatting.
 
 ---
 
 ## 5. Comprehensive Test Strategy
 
-The REX test suite guarantees deterministic behavior, security, and tamper resistance:
-
 ### 5.1 Unit Tests (`tests/unit/`)
+- `test_config.py`: Verify typed settings, defaults, environment variable overrides.
 - `test_state_machine.py`: Validate all legal transitions and ensure illegal transitions throw `InvalidStateTransitionError`.
-- `test_models.py`: Validate Pydantic schema validation, defaults, immutability, and JSON export.
-- `test_hashing.py`: Verify deterministic SHA-256 for code files, ignoring transient files (`.pyc`, `__pycache__`).
-- `test_sandbox.py`:
-  - Normal execution captures stdout, stderr, exit code 0.
-  - Script raising exception captures stack trace and exit code 1.
-  - Infinite loop script terminates strictly at timeout (e.g. 2s) with `TimeoutExpired`.
-  - Process cleanup: child processes spawned by script are forcefully killed upon termination.
-- `test_analyzer.py`: Test statistical routines (mean, std, 95% CI, $p$-values, effect sizes) against hardcoded mathematical reference values.
-- `test_evidence_store.py`: Test database CRUD, foreign key enforcement, append-only constraints, and relational edge queries.
+- `test_models.py`: Validate domain schema validation, immutability, and JSON export.
+- `test_hashing.py`: Verify deterministic SHA-256 for code files, configs, and artifacts.
+- `test_docker_runner.py`: Verify container configuration (quotas, non-root, disabled network, timeouts).
+- `test_statistics.py`: Test statistical routines against hardcoded mathematical reference values.
+- `test_persistence.py`: Test database CRUD, foreign key enforcement, and append-only constraints.
 
 ### 5.2 Integration Tests (`tests/integration/`)
-- `test_execution_flow.py`: Full execution of an experiment specification from source generation to `metrics.json` extraction and database registration.
-- `test_cli.py`: Execute `rex inspect`, `rex status`, `rex verify` via Click's `CliRunner`.
+- `test_execution_flow.py`: Full execution of an experiment specification from workspace generation to `metrics.json` extraction and database registration.
+- `test_cli.py`: Execute `rex research`, `rex status`, `rex inspect`, `rex verify` via Typer `CliRunner`.
 
-### 5.3 Deterministic Verification & Tamper Tests (`tests/unit/test_verifier.py`)
-- **Positive Verification**: Run a legitimate experiment and confirm `rex verify` passes with 0 errors.
+### 5.3 Security & Tamper Tests (`tests/security/`)
 - **Tamper Test 1 (Corrupted Metric)**: Modify a metric value in `metrics.json` after execution $\to$ verify `rex verify` detects numerical mismatch.
 - **Tamper Test 2 (Code Tampering)**: Modify a line in `source/run.py` without updating code version $\to$ verify `rex verify` detects SHA-256 mismatch.
 - **Tamper Test 3 (Ungrounded Claim)**: Insert a claim asserting an accuracy value not found in any `Result` $\to$ verify `rex verify` flags the claim as ungrounded.
-- **Tamper Test 4 (Missing Log)**: Delete `stdout.log` $\to$ verify `rex verify` detects missing execution artifact.
-
-### 5.4 End-to-End Tests (`tests/e2e/`)
-- `test_v1_slice.py`: Run an actual ML question (e.g., comparing Adam vs SGD on a synthetic logistic regression task), let REX execute 3 repetitions with different seeds, compute statistics, generate plots, store evidence, and verify.
+- **Tamper Test 4 (Network Disabled)**: Attempt an outbound network request inside the execution sandbox $\to$ verify it is blocked.
+- **Tamper Test 5 (Host Credential Isolation)**: Verify container environment does not inherit host secret environment variables.
