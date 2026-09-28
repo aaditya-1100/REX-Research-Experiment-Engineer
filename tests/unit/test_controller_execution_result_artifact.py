@@ -23,6 +23,7 @@ from rex.controller.state_machine import create_research_run
 from rex.domain.models import (
     ArtifactType,
     ExecutionStatus,
+    ExperimentStatus,
 )
 from rex.observability.events import (
     ActorType,
@@ -39,6 +40,7 @@ from rex.persistence.repositories import (
     ArtifactRepository,
     EventRepository,
     ExecutionRepository,
+    ExperimentRepository,
     ResultRepository,
 )
 
@@ -110,10 +112,16 @@ def test_create_execution_success_and_event(session_factory: sessionmaker):
         assert db_event.payload_json["execution_id"] == exec_id
         assert db_event.payload_json["note"] == "first execution attempt"
 
-    # Verify sink
-    assert len(sink.events) == 1
-    assert sink.events[0].event_type == EventType.EXECUTION_CREATED
-    assert sink.events[0].execution_id == exec_id
+        # Verify experiment transitioned DESIGNED -> PENDING
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model is not None
+        assert exp_model.status == ExperimentStatus.PENDING.value
+
+    # Verify sink received both experiment status synchronization and execution creation
+    assert any(e.event_type == EventType.EXECUTION_CREATED for e in sink.events)
+    assert any(e.event_type == EventType.EXPERIMENT_STATUS_CHANGED for e in sink.events)
+    created_evt = next(e for e in sink.events if e.event_type == EventType.EXECUTION_CREATED)
+    assert created_evt.execution_id == exec_id
 
 
 def test_create_execution_running_status_emits_started_event(session_factory: sessionmaker):
@@ -135,8 +143,13 @@ def test_create_execution_running_status_emits_started_event(session_factory: se
 
     assert execution.status == ExecutionStatus.RUNNING
     assert execution.started_at is not None
-    assert len(sink.events) == 1
-    assert sink.events[0].event_type == EventType.EXECUTION_STARTED
+    assert any(e.event_type == EventType.EXECUTION_STARTED for e in sink.events)
+    assert any(e.event_type == EventType.EXPERIMENT_STATUS_CHANGED for e in sink.events)
+
+    with get_db_session(session_factory) as session:
+        stored_exp = ExperimentRepository(session).get_by_id(exp_id)
+        assert stored_exp is not None
+        assert stored_exp.status == ExperimentStatus.RUNNING.value
 
 
 def test_create_execution_missing_experiment_raises(session_factory: sessionmaker):
@@ -192,6 +205,7 @@ def test_update_execution_status_lifecycle_and_events(session_factory: sessionma
         exp = create_experiment(session=session, research_run_id=run.id, objective="Obj")
         execution = create_execution(session=session, experiment_id=exp.id)
         exec_id = execution.id
+        exp_id = exp.id
 
     # 1. PENDING -> RUNNING
     with get_db_session(session_factory) as session:
@@ -205,7 +219,13 @@ def test_update_execution_status_lifecycle_and_events(session_factory: sessionma
         assert running.status == ExecutionStatus.RUNNING
         assert running.started_at is not None
 
-    assert sink.events[-1].event_type == EventType.EXECUTION_STARTED
+    assert any(e.event_type == EventType.EXECUTION_STARTED for e in sink.events)
+    assert any(e.event_type == EventType.EXPERIMENT_STATUS_CHANGED for e in sink.events)
+
+    with get_db_session(session_factory) as session:
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model is not None
+        assert exp_model.status == ExperimentStatus.RUNNING.value
 
     # 2. RUNNING -> COMPLETED
     with get_db_session(session_factory) as session:
@@ -223,7 +243,12 @@ def test_update_execution_status_lifecycle_and_events(session_factory: sessionma
         assert completed.finished_at is not None
         assert completed.resource_usage["duration_s"] == 45.2
 
-    assert sink.events[-1].event_type == EventType.EXECUTION_COMPLETED
+    assert any(e.event_type == EventType.EXECUTION_COMPLETED for e in sink.events)
+
+    with get_db_session(session_factory) as session:
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model is not None
+        assert exp_model.status == ExperimentStatus.COMPLETED.value
 
 
 def test_update_execution_status_invalid_transition_raises(session_factory: sessionmaker):
@@ -357,6 +382,44 @@ def test_record_result_rejects_research_agent(session_factory: sessionmaker):
             metric_value=0.999,
             actor=ActorType.RESEARCH_AGENT,
         )
+
+
+def test_record_result_non_finite_metric_rejected(session_factory: sessionmaker):
+    """Verify record_result rejects NaN and infinities, but accepts finite values."""
+    with get_db_session(session_factory) as session:
+        run = create_research_run(session=session, research_question="Non-finite test")
+        exp = create_experiment(session=session, research_run_id=run.id, objective="Obj")
+        execution = create_execution(session=session, experiment_id=exp.id)
+        exec_id = execution.id
+
+    for non_finite in (float("nan"), float("inf"), float("-inf")):
+        with (
+            get_db_session(session_factory) as session,
+            pytest.raises(ValueError, match="finite number"),
+        ):
+            record_result(
+                session=session,
+                execution_id=exec_id,
+                metric_name="acc",
+                metric_value=non_finite,
+            )
+
+    with get_db_session(session_factory) as session:
+        r0 = record_result(
+            session=session,
+            execution_id=exec_id,
+            metric_name="zero_metric",
+            metric_value=0.0,
+        )
+        assert r0.metric_value == 0.0
+
+        r_normal = record_result(
+            session=session,
+            execution_id=exec_id,
+            metric_name="normal_metric",
+            metric_value=42.125,
+        )
+        assert r_normal.metric_value == 42.125
 
 
 def test_record_results_batch(session_factory: sessionmaker):
@@ -624,3 +687,121 @@ def test_create_execution_run_helper(session_factory: sessionmaker):
         stored = ExecutionRepository(session).get_by_id(execution.id)
         assert stored is not None
         assert stored.seed == 100
+
+
+def test_record_artifact_execution_evidence_without_execution_id_raises(
+    session_factory: sessionmaker,
+):
+    """Verify execution artifact types (LOG, STDOUT, OUTPUT, etc.) cannot be registered without execution_id."""
+    with get_db_session(session_factory) as session:
+        run = create_research_run(session=session, research_question="Artifact test")
+        run_id = run.id
+
+    for exec_type in (
+        ArtifactType.LOG,
+        ArtifactType.STDOUT,
+        ArtifactType.STDERR,
+        ArtifactType.METRIC,
+        ArtifactType.CHECKPOINT,
+        ArtifactType.OUTPUT,
+    ):
+        with (
+            get_db_session(session_factory) as session,
+            pytest.raises(ValueError, match="represent execution outputs"),
+        ):
+            record_artifact(
+                session=session,
+                artifact_type=exec_type,
+                path="output.log",
+                content_hash="hash123",
+                execution_id=None,
+                research_run_id=run_id,
+            )
+
+
+def test_execution_cancellation_emits_cancelled_event_and_updates_experiment(
+    session_factory: sessionmaker,
+):
+    """Verify cancelling an execution emits EXECUTION_CANCELLED and updates parent experiment."""
+    sink = InMemoryEventSink()
+
+    with get_db_session(session_factory) as session:
+        run = create_research_run(session=session, research_question="Cancellation test")
+        exp = create_experiment(session=session, research_run_id=run.id, objective="Obj")
+        execution = create_execution(
+            session=session,
+            experiment_id=exp.id,
+            status=ExecutionStatus.RUNNING,
+        )
+        exec_id = execution.id
+        exp_id = exp.id
+
+    with get_db_session(session_factory) as session:
+        cancelled = update_execution_status(
+            session=session,
+            execution_id=exec_id,
+            new_status=ExecutionStatus.CANCELLED,
+            event_sink=sink,
+            reason="Aborted by user",
+        )
+        assert cancelled.status == ExecutionStatus.CANCELLED
+
+    # Check EXECUTION_CANCELLED event
+    assert any(e.event_type == EventType.EXECUTION_CANCELLED for e in sink.events)
+
+    with get_db_session(session_factory) as session:
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model is not None
+        assert exp_model.status == ExperimentStatus.CANCELLED.value
+
+
+def test_cannot_create_execution_on_terminal_experiment(session_factory: sessionmaker):
+    """Verify creating execution on a terminal experiment is rejected with StateMachineError."""
+    with get_db_session(session_factory) as session:
+        run = create_research_run(session=session, research_question="Terminal exp test")
+        exp = create_experiment(session=session, research_run_id=run.id, objective="Obj")
+        exp_id = exp.id
+
+        # Run an execution to completion to make the experiment COMPLETED
+        exec1 = create_execution(
+            session=session, experiment_id=exp_id, status=ExecutionStatus.RUNNING
+        )
+        update_execution_status(
+            session=session, execution_id=exec1.id, new_status=ExecutionStatus.COMPLETED
+        )
+
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model.status == ExperimentStatus.COMPLETED.value
+
+    # Attempting to create a new execution on completed experiment must fail
+    with (
+        get_db_session(session_factory) as session,
+        pytest.raises(StateMachineError, match="terminal status"),
+    ):
+        create_execution(session=session, experiment_id=exp_id)
+
+
+def test_experiment_failed_when_all_executions_fail(session_factory: sessionmaker):
+    """Verify parent experiment transitions to FAILED when all executions fail."""
+    with get_db_session(session_factory) as session:
+        run = create_research_run(session=session, research_question="Fail test")
+        exp = create_experiment(session=session, research_run_id=run.id, objective="Obj")
+        exec1 = create_execution(
+            session=session, experiment_id=exp.id, status=ExecutionStatus.RUNNING
+        )
+        exp_id = exp.id
+        exec1_id = exec1.id
+
+    with get_db_session(session_factory) as session:
+        update_execution_status(
+            session=session,
+            execution_id=exec1_id,
+            new_status=ExecutionStatus.FAILED,
+            exit_code=1,
+            reason="CUDA Out of Memory",
+        )
+
+    with get_db_session(session_factory) as session:
+        exp_model = ExperimentRepository(session).get_by_id(exp_id)
+        assert exp_model is not None
+        assert exp_model.status == ExperimentStatus.FAILED.value

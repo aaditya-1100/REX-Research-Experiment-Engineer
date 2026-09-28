@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from rex.domain.models import (
+    EXECUTION_ARTIFACT_TYPES,
     TERMINAL_EXECUTION_STATUSES,
     Artifact,
     ArtifactType,
@@ -220,6 +221,39 @@ def test_result_validation_rejects_empty():
         Result(execution_id="exec_1", metric_name="   ")
 
 
+def test_result_metric_value_finite_validation():
+    """Verify scalar metric_value rejects NaN, +inf, -inf, and accepts finite floats."""
+    # NaN rejected
+    with pytest.raises(ValidationError) as exc_info:
+        Result(execution_id="exec_1", metric_name="acc", metric_value=float("nan"))
+    assert "finite number" in str(exc_info.value)
+
+    # +inf rejected
+    with pytest.raises(ValidationError) as exc_info:
+        Result(execution_id="exec_1", metric_name="acc", metric_value=float("inf"))
+    assert "finite number" in str(exc_info.value)
+
+    # -inf rejected
+    with pytest.raises(ValidationError) as exc_info:
+        Result(execution_id="exec_1", metric_name="acc", metric_value=float("-inf"))
+    assert "finite number" in str(exc_info.value)
+
+    # 0.0 accepted
+    r0 = Result(execution_id="exec_1", metric_name="loss", metric_value=0.0)
+    assert r0.metric_value == 0.0
+
+    # normal positive/negative values accepted
+    r_pos = Result(execution_id="exec_1", metric_name="acc", metric_value=98.5)
+    assert r_pos.metric_value == 98.5
+
+    r_neg = Result(execution_id="exec_1", metric_name="log_loss", metric_value=-0.042)
+    assert r_neg.metric_value == -0.042
+
+    # None accepted for optional metric_value
+    r_none = Result(execution_id="exec_1", metric_name="unscored")
+    assert r_none.metric_value is None
+
+
 def test_result_immutability():
     """Verify immutability of top-level and nested result data."""
     data = {"confusion_matrix": [[10, 2], [1, 15]]}
@@ -329,6 +363,7 @@ def test_artifact_type_coercion():
     """Verify string coercion into ArtifactType."""
     art = Artifact(
         research_run_id="run_1",
+        execution_id="exec_1",
         artifact_type="stdout",
         path="stdout.log",
         content_hash="hash123",
@@ -342,6 +377,49 @@ def test_artifact_type_coercion():
         content_hash="hash456",
     )
     assert art_unknown.artifact_type == ArtifactType.OTHER
+
+
+def test_artifact_execution_provenance_enforced():
+    """Verify execution artifact types require execution_id, while standalone types do not."""
+    for exec_type in EXECUTION_ARTIFACT_TYPES:
+        with pytest.raises(ValidationError) as exc_info:
+            Artifact(
+                research_run_id="run_1",
+                artifact_type=exec_type,
+                path="output.dat",
+                content_hash="hash123",
+                execution_id=None,
+            )
+        assert "represent execution outputs" in str(exc_info.value)
+
+        # Passes with execution_id
+        art = Artifact(
+            research_run_id="run_1",
+            artifact_type=exec_type,
+            path="output.dat",
+            content_hash="hash123",
+            execution_id="exec_1",
+        )
+        assert art.is_execution_artifact is True
+        assert art.execution_id == "exec_1"
+
+    # Standalone run-level artifacts do NOT require execution_id
+    for standalone_type in (
+        ArtifactType.OTHER,
+        ArtifactType.DATASET,
+        ArtifactType.CODE,
+        ArtifactType.MODEL,
+        ArtifactType.MANIFEST,
+    ):
+        art = Artifact(
+            research_run_id="run_1",
+            artifact_type=standalone_type,
+            path="data/split.csv",
+            content_hash="hash456",
+            execution_id=None,
+        )
+        assert art.is_execution_artifact is False
+        assert art.execution_id is None
 
 
 def test_artifact_immutability():

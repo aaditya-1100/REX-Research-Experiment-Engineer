@@ -4,6 +4,7 @@ Exports domain models and state representations.
 """
 
 from rex.domain.models import (
+    EXECUTION_ARTIFACT_TYPES,
     TERMINAL_EXECUTION_STATUSES,
     TERMINAL_EXPERIMENT_STATUSES,
     TERMINAL_STATES,
@@ -26,6 +27,7 @@ from rex.domain.models import (
 )
 
 __all__ = [
+    "EXECUTION_ARTIFACT_TYPES",
     "TERMINAL_EXECUTION_STATUSES",
     "TERMINAL_EXPERIMENT_STATUSES",
     "TERMINAL_STATES",

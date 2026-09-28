@@ -4,6 +4,7 @@ Defines strongly typed domain representations for research investigations, hypot
 experiment specifications, and authoritative lifecycle states.
 """
 
+import math
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -11,7 +12,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rex.observability.events import freeze_value, unfreeze_value
 from rex.persistence.models import (
@@ -170,6 +171,21 @@ class ArtifactType(StrEnum):
     MANIFEST = "manifest"
     OUTPUT = "output"
     OTHER = "other"
+
+
+# Artifact types that represent execution evidence and must have an execution_id
+EXECUTION_ARTIFACT_TYPES: frozenset[ArtifactType] = frozenset(
+    {
+        ArtifactType.LOG,
+        ArtifactType.STDOUT,
+        ArtifactType.STDERR,
+        ArtifactType.METRIC,
+        ArtifactType.PLOT,
+        ArtifactType.FIGURE,
+        ArtifactType.CHECKPOINT,
+        ArtifactType.OUTPUT,
+    }
+)
 
 
 class MetricDirection(StrEnum):
@@ -1056,6 +1072,15 @@ class Result(BaseModel):
             raise ValueError("Metric name must be a non-empty string.")
         return cleaned
 
+    @field_validator("metric_value")
+    @classmethod
+    def _validate_finite_metric_value(cls, v: float | None) -> float | None:
+        if v is None:
+            return None
+        if not math.isfinite(v):
+            raise ValueError(f"Metric value must be a finite number, got {v}.")
+        return float(v)
+
     @field_validator("result_data", mode="after")
     @classmethod
     def _freeze_result_data(cls, v: Any) -> Mapping[str, Any]:
@@ -1119,7 +1144,7 @@ class Artifact(BaseModel):
         default=None, description="Optional ID of producing execution run"
     )
     artifact_type: ArtifactType = Field(
-        default=ArtifactType.OUTPUT, description="Categorization of the artifact"
+        default=ArtifactType.OTHER, description="Categorization of the artifact"
     )
     path: str = Field(description="Storage path or location")
     content_hash: str = Field(
@@ -1177,6 +1202,20 @@ class Artifact(BaseModel):
         if v.tzinfo is None:
             return v.replace(tzinfo=UTC)
         return v.astimezone(UTC)
+
+    @property
+    def is_execution_artifact(self) -> bool:
+        """Whether this artifact represents execution evidence."""
+        return self.execution_id is not None
+
+    @model_validator(mode="after")
+    def _validate_execution_provenance(self) -> "Artifact":
+        if self.artifact_type in EXECUTION_ARTIFACT_TYPES and not self.execution_id:
+            raise ValueError(
+                f"Artifacts of type '{self.artifact_type.value}' represent execution outputs "
+                f"and must have an 'execution_id'."
+            )
+        return self
 
     @classmethod
     def from_persistence(cls, model: ArtifactModel) -> "Artifact":

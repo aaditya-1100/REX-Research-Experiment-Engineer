@@ -27,6 +27,7 @@ class EventType(StrEnum):
     EXECUTION_STARTED = "execution_started"
     EXECUTION_COMPLETED = "execution_completed"
     EXECUTION_FAILED = "execution_failed"
+    EXECUTION_CANCELLED = "execution_cancelled"
     RESULT_RECORDED = "result_recorded"
     ANALYSIS_COMPLETED = "analysis_completed"
     VERIFICATION_STARTED = "verification_started"

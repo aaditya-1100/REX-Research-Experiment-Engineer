@@ -50,6 +50,29 @@ def test_optional_correlation_identifiers():
     assert event.execution_id == "exec_999"
 
 
+def test_execution_event_types_vocabulary():
+    """Verify all execution lifecycle event types exist in EventType and can be created."""
+    execution_events = [
+        EventType.EXECUTION_CREATED,
+        EventType.EXECUTION_STARTED,
+        EventType.EXECUTION_COMPLETED,
+        EventType.EXECUTION_FAILED,
+        EventType.EXECUTION_CANCELLED,
+        EventType.RESULT_RECORDED,
+        EventType.ARTIFACT_CREATED,
+    ]
+    for evt_type in execution_events:
+        evt = create_event(
+            event_type=evt_type,
+            actor=ActorType.EXECUTION_WORKER,
+            research_run_id="run_001",
+            execution_id="exec_001",
+            payload={"test": True},
+        )
+        assert evt.event_type == evt_type
+        assert evt.execution_id == "exec_001"
+
+
 def test_utc_timezone_awareness_enforced():
     """Verify naive datetimes without timezone are rejected."""
     # Intentionally construct naive datetime to verify validation error

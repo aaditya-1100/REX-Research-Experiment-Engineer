@@ -5,6 +5,7 @@ recording empirical machine-generated results, tracking filesystem artifacts wit
 hashes, enforcing actor permissions, and recording structured audit events.
 """
 
+import math
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -19,12 +20,15 @@ from rex.controller.exceptions import (
     MissingResearchRunError,
     StateMachineError,
 )
+from rex.controller.experiments import update_experiment_status
 from rex.domain.models import (
+    EXECUTION_ARTIFACT_TYPES,
     TERMINAL_EXECUTION_STATUSES,
     Artifact,
     ArtifactType,
     Execution,
     ExecutionStatus,
+    ExperimentStatus,
     Result,
 )
 from rex.observability.events import (
@@ -137,10 +141,19 @@ def create_execution(
             target_state="create_execution",
         )
 
-    # 2. Enforce parent experiment existence
+    # 2. Enforce parent experiment existence and active status
     exp_model = session.get(ExperimentModel, experiment_id)
     if exp_model is None:
         raise MissingExperimentError(experiment_id)
+
+    if exp_model.status in (
+        ExperimentStatus.COMPLETED.value,
+        ExperimentStatus.FAILED.value,
+        ExperimentStatus.CANCELLED.value,
+    ):
+        raise StateMachineError(
+            f"Cannot create execution for experiment '{experiment_id}' in terminal status '{exp_model.status}'."
+        )
 
     status_enum = status if isinstance(status, ExecutionStatus) else ExecutionStatus(status)
 
@@ -171,7 +184,33 @@ def create_execution(
     repo = ExecutionRepository(session)
     repo.create(domain_execution.to_persistence())
 
-    # 4. Record structured audit event
+    # 4. Synchronize parent experiment status with execution lifecycle
+    if (
+        status_enum == ExecutionStatus.PENDING
+        and exp_model.status == ExperimentStatus.DESIGNED.value
+    ):
+        update_experiment_status(
+            session=session,
+            experiment_id=experiment_id,
+            new_status=ExperimentStatus.PENDING,
+            actor=actor_enum,
+            reason=f"Execution '{domain_execution.id}' scheduled and pending.",
+            event_sink=event_sink,
+        )
+    elif status_enum == ExecutionStatus.RUNNING and exp_model.status in (
+        ExperimentStatus.DESIGNED.value,
+        ExperimentStatus.PENDING.value,
+    ):
+        update_experiment_status(
+            session=session,
+            experiment_id=experiment_id,
+            new_status=ExperimentStatus.RUNNING,
+            actor=actor_enum,
+            reason=f"Execution '{domain_execution.id}' launched in RUNNING status.",
+            event_sink=event_sink,
+        )
+
+    # 5. Record structured audit event
     event_type = (
         EventType.EXECUTION_STARTED
         if status_enum == ExecutionStatus.RUNNING
@@ -202,7 +241,7 @@ def create_execution(
     EventRepository(session).record_event(creation_event)
     session.flush()
 
-    # 5. Dispatch to sink if provided
+    # 6. Dispatch to sink if provided
     if event_sink is not None:
         event_sink.emit(creation_event)
 
@@ -289,8 +328,10 @@ def update_execution_status(
         event_type = EventType.EXECUTION_COMPLETED
     elif target_status == ExecutionStatus.FAILED:
         event_type = EventType.EXECUTION_FAILED
+    elif target_status == ExecutionStatus.CANCELLED:
+        event_type = EventType.EXECUTION_CANCELLED
     else:
-        event_type = EventType.EXECUTION_FAILED  # Cancelled or aborted mapped to failed event
+        event_type = EventType.EXECUTION_FAILED
 
     exp_model = model.experiment
     run_id = exp_model.research_run_id if exp_model else "unknown"
@@ -323,6 +364,51 @@ def update_execution_status(
     if event_sink is not None:
         event_sink.emit(transition_event)
 
+    # 7. Synchronize parent experiment status with execution lifecycle
+    parent_exp = session.get(ExperimentModel, model.experiment_id)
+    if parent_exp is not None:
+        if target_status == ExecutionStatus.RUNNING:
+            if parent_exp.status in (
+                ExperimentStatus.DESIGNED.value,
+                ExperimentStatus.PENDING.value,
+            ):
+                update_experiment_status(
+                    session=session,
+                    experiment_id=parent_exp.id,
+                    new_status=ExperimentStatus.RUNNING,
+                    actor=actor_enum,
+                    reason=f"Execution '{execution_id}' entered RUNNING status.",
+                    event_sink=event_sink,
+                )
+        elif target_status in TERMINAL_EXECUTION_STATUSES:
+            all_execs = repo.list_by_experiment(model.experiment_id)
+            all_terminal = all(
+                ExecutionStatus(e.status) in TERMINAL_EXECUTION_STATUSES for e in all_execs
+            )
+            if all_terminal and parent_exp.status == ExperimentStatus.RUNNING.value:
+                any_completed = any(e.status == ExecutionStatus.COMPLETED.value for e in all_execs)
+                all_cancelled = all(e.status == ExecutionStatus.CANCELLED.value for e in all_execs)
+                if any_completed:
+                    target_exp_status = ExperimentStatus.COMPLETED
+                    term_reason = (
+                        "All executions finished; at least one execution completed successfully."
+                    )
+                elif all_cancelled:
+                    target_exp_status = ExperimentStatus.CANCELLED
+                    term_reason = "All executions cancelled."
+                else:
+                    target_exp_status = ExperimentStatus.FAILED
+                    term_reason = "All executions finished with failure."
+
+                update_experiment_status(
+                    session=session,
+                    experiment_id=parent_exp.id,
+                    new_status=target_exp_status,
+                    actor=actor_enum,
+                    reason=term_reason,
+                    event_sink=event_sink,
+                )
+
     return Execution.from_persistence(model)
 
 
@@ -353,6 +439,9 @@ def record_result(
     exec_model = session.get(ExecutionModel, execution_id)
     if exec_model is None:
         raise MissingExecutionError(execution_id)
+
+    if metric_value is not None and not math.isfinite(metric_value):
+        raise ValueError(f"Metric value must be a finite number, got {metric_value}.")
 
     init_kwargs: dict[str, Any] = {
         "execution_id": execution_id,
@@ -454,7 +543,19 @@ def record_artifact(
             target_state="create_artifact",
         )
 
-    # 2. Enforce referential integrity and lineage consistency
+    # 2. Coerce artifact type and enforce execution provenance
+    type_enum = (
+        artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
+    )
+
+    if type_enum in EXECUTION_ARTIFACT_TYPES and execution_id is None:
+        raise ValueError(
+            f"Artifacts of type '{type_enum.value}' represent execution outputs and must be "
+            f"linked to an execution (execution_id cannot be None)."
+        )
+
+    # 3. Enforce referential integrity and lineage consistency:
+    # artifact.execution_id -> Execution -> Experiment -> ResearchRun
     target_run_id: str
     target_exp_id: str | None = None
 
@@ -463,8 +564,16 @@ def record_artifact(
         if exec_model is None:
             raise MissingExecutionError(execution_id)
 
-        target_exp_id = exec_model.experiment_id
-        derived_run_id = exec_model.experiment.research_run_id
+        exp_model = session.get(ExperimentModel, exec_model.experiment_id)
+        if exp_model is None:
+            raise MissingExperimentError(exec_model.experiment_id)
+
+        run_model = session.get(ResearchRunModel, exp_model.research_run_id)
+        if run_model is None:
+            raise MissingResearchRunError(exp_model.research_run_id)
+
+        target_exp_id = exp_model.id
+        derived_run_id = exp_model.research_run_id
         if research_run_id is not None and research_run_id != derived_run_id:
             raise StateMachineError(
                 f"Referenced research run '{research_run_id}' does not match execution run '{derived_run_id}'."
@@ -480,11 +589,7 @@ def record_artifact(
             raise MissingResearchRunError(research_run_id)
         target_run_id = research_run_id
 
-    # 3. Construct domain entity
-    type_enum = (
-        artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
-    )
-
+    # 4. Construct domain entity
     init_kwargs: dict[str, Any] = {
         "research_run_id": target_run_id,
         "execution_id": execution_id,
@@ -511,6 +616,7 @@ def record_artifact(
         "content_hash": domain_artifact.content_hash,
         "size_bytes": domain_artifact.size_bytes,
         "execution_id": domain_artifact.execution_id,
+        "experiment_id": target_exp_id,
         "research_run_id": domain_artifact.research_run_id,
     }
     if context:
