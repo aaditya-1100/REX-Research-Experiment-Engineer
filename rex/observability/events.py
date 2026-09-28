@@ -1,16 +1,18 @@
 """REX Structured Events Model (REX-003).
 
-Provides strongly typed, immutable research lifecycle events with timezone-aware
+Provides strongly typed, deeply immutable research lifecycle events with timezone-aware
 UTC timestamps, explicit actor attribution, recursive secret sanitization,
 and deterministic serialization.
 """
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, field_validator
 
 
 class EventType(StrEnum):
@@ -67,7 +69,7 @@ def sanitize_value(val: Any) -> Any:
     """Recursively sanitize an object, masking sensitive keys and SecretStr instances."""
     if isinstance(val, SecretStr):
         return "[REDACTED]"
-    if isinstance(val, dict):
+    if isinstance(val, (dict, Mapping)):
         sanitized_dict: dict[str, Any] = {}
         for k, v in val.items():
             k_str = str(k).lower().replace("-", "_")
@@ -87,13 +89,42 @@ def sanitize_value(val: Any) -> Any:
     return str(val)
 
 
+def freeze_value(val: Any) -> Any:
+    """Recursively freeze a value into immutable containers (MappingProxyType, tuple, frozenset).
+
+    Defensively copies caller-supplied dictionaries and collections so mutations on
+    the original objects have zero effect on the frozen representation.
+    """
+    if isinstance(val, (dict, Mapping)):
+        return MappingProxyType({str(k): freeze_value(v) for k, v in val.items()})
+    if isinstance(val, (list, tuple)):
+        return tuple(freeze_value(item) for item in val)
+    if isinstance(val, (set, frozenset)):
+        return frozenset(freeze_value(item) for item in val)
+    return val
+
+
+def unfreeze_value(val: Any) -> Any:
+    """Recursively convert immutable containers back to standard JSON-compatible Python dicts and lists."""
+    if isinstance(val, (dict, Mapping)):
+        return {str(k): unfreeze_value(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return [unfreeze_value(item) for item in val]
+    return val
+
+
 class ResearchEvent(BaseModel):
-    """Immutable, strongly typed event representing a historical research lifecycle fact."""
+    """Immutable, strongly typed event representing a historical research lifecycle fact.
+
+    Both the top-level event attributes and the nested payload structures (mappings,
+    tuples) are deeply immutable, preventing mutation of historical research records.
+    """
 
     model_config = ConfigDict(
         frozen=True,
         extra="forbid",
         use_enum_values=True,
+        arbitrary_types_allowed=True,
     )
 
     event_id: str = Field(
@@ -111,9 +142,9 @@ class ResearchEvent(BaseModel):
     execution_id: str | None = Field(
         default=None, description="Optional associated execution run ID"
     )
-    payload: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Structured, sanitized JSON-serializable event payload",
+    payload: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Structured, sanitized, deeply immutable JSON-serializable event payload",
     )
 
     @field_validator("timestamp")
@@ -123,12 +154,16 @@ class ResearchEvent(BaseModel):
             raise ValueError("Timestamp must be timezone-aware (UTC)")
         return v.astimezone(UTC)
 
-    @field_validator("payload", mode="before")
+    @field_validator("payload", mode="after")
     @classmethod
-    def _validate_and_sanitize_payload(cls, v: Any) -> dict[str, Any]:
-        if not isinstance(v, dict):
-            raise ValueError("Event payload must be a dictionary")  # noqa: TRY004
-        return sanitize_value(v)
+    def _validate_and_sanitize_payload(cls, v: Mapping[str, Any]) -> Mapping[str, Any]:
+        sanitized = sanitize_value(v)
+        return freeze_value(sanitized)
+
+    @field_serializer("payload")
+    def _serialize_payload(self, v: Mapping[str, Any]) -> dict[str, Any]:
+        """Serialize payload into standard JSON-compatible Python dict."""
+        return unfreeze_value(v)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert event to a standard JSON-compatible dictionary."""
@@ -149,7 +184,7 @@ def create_event(
     event_id: str | None = None,
     timestamp: datetime | None = None,
 ) -> ResearchEvent:
-    """Factory function for creating validated, immutable ResearchEvents."""
+    """Factory function for creating validated, deeply immutable ResearchEvents."""
     kwargs: dict[str, Any] = {
         "event_type": event_type,
         "actor": actor,

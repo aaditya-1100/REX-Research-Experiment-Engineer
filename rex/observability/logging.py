@@ -7,6 +7,7 @@ with structured research context, secret sanitization, and level configuration.
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, ClassVar, TextIO
 
@@ -72,7 +73,7 @@ class JsonFormatter(logging.Formatter):
 
         # Include sanitized payload if present
         payload = getattr(record, "payload", None)
-        if isinstance(payload, dict):
+        if isinstance(payload, (dict, Mapping)):
             log_entry["payload"] = sanitize_value(payload)
 
         # Collect and sanitize any remaining non-standard extra attributes

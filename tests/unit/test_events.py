@@ -29,7 +29,7 @@ def test_valid_event_creation():
     assert event.event_type == EventType.RESEARCH_CREATED
     assert event.actor == ActorType.OWNER
     assert event.research_run_id == "run_001"
-    assert event.payload == {"topic": "learning_rate_decay"}
+    assert event.payload["topic"] == "learning_rate_decay"
     assert event.experiment_id is None
     assert event.execution_id is None
     assert event.timestamp.tzinfo is not None
@@ -99,22 +99,101 @@ def test_event_type_validation():
         )
 
 
-def test_event_immutability():
-    """Verify events are frozen and cannot be mutated after creation."""
+def test_top_level_immutability():
+    """Verify top-level event attributes cannot be mutated after creation."""
     event = create_event(
         event_type=EventType.EXPERIMENT_CREATED,
         actor=ActorType.RESEARCH_AGENT,
         research_run_id="run_001",
+        payload={"config": {"lr": 0.01}},
     )
-    with pytest.raises(ValidationError):
-        event.research_run_id = "mutated_id"  # type: ignore
-
     with pytest.raises(ValidationError):
         event.event_type = EventType.ERROR  # type: ignore
 
+    with pytest.raises(ValidationError):
+        event.payload = {"new": "payload"}  # type: ignore
+
+    with pytest.raises(ValidationError):
+        event.research_run_id = "mutated_id"  # type: ignore
+
+
+def test_nested_dictionary_immutability():
+    """Verify nested payload dictionaries cannot be modified, deleted from, or appended to."""
+    event = create_event(
+        event_type=EventType.EXPERIMENT_CREATED,
+        actor=ActorType.RESEARCH_AGENT,
+        research_run_id="run_001",
+        payload={"nested": {"value": 1, "deep": {"target": "acc"}}},
+    )
+
+    # Item assignment at top-level payload must fail
+    with pytest.raises(TypeError):
+        event.payload["nested"] = "override"  # type: ignore
+
+    # Item assignment at nested level must fail
+    with pytest.raises(TypeError):
+        event.payload["nested"]["value"] = 999  # type: ignore
+
+    # Item deletion at nested level must fail
+    with pytest.raises(TypeError):
+        del event.payload["nested"]["value"]  # type: ignore
+
+    # Deep nested modification must fail
+    with pytest.raises(TypeError):
+        event.payload["nested"]["deep"]["target"] = "loss"  # type: ignore
+
+
+def test_nested_collection_immutability():
+    """Verify nested lists and collections are frozen into immutable containers."""
+    event = create_event(
+        event_type=EventType.RESULT_RECORDED,
+        actor=ActorType.EXECUTION_WORKER,
+        research_run_id="run_001",
+        payload={"metrics": [0.91, 0.93, 0.95], "tags": {"seeds": [42, 43]}},
+    )
+
+    # List is converted to tuple; append/extend must fail
+    with pytest.raises(AttributeError):
+        event.payload["metrics"].append(0.99)  # type: ignore
+
+    # Index assignment must fail
+    with pytest.raises(TypeError):
+        event.payload["metrics"][0] = 0.0  # type: ignore
+
+    # Nested collection in dictionary must also be immutable
+    with pytest.raises(AttributeError):
+        event.payload["tags"]["seeds"].append(44)  # type: ignore
+
+
+def test_defensive_copy_isolation():
+    """Verify mutating caller's original dictionary post-creation does NOT affect the event."""
+    caller_payload = {
+        "nested": {"value": 1, "items": [10, 20]},
+        "active": True,
+    }
+
+    event = create_event(
+        event_type=EventType.RESEARCH_CREATED,
+        actor=ActorType.OWNER,
+        research_run_id="run_001",
+        payload=caller_payload,
+    )
+
+    # Mutate the caller's dictionary and its nested structures
+    caller_payload["nested"]["value"] = 999
+    caller_payload["nested"]["items"].append(30)
+    caller_payload["active"] = False
+    caller_payload["hacked_key"] = "compromised"
+
+    # The event must remain completely unchanged
+    assert event.payload["nested"]["value"] == 1
+    assert event.payload["nested"]["items"] == (10, 20)
+    assert event.payload["active"] is True
+    assert "hacked_key" not in event.payload
+
 
 def test_payload_must_be_dictionary():
-    """Verify payloads that are not dictionaries are rejected."""
+    """Verify payloads that are not dictionaries/mappings are rejected."""
     with pytest.raises(ValidationError):
         ResearchEvent(
             event_type=EventType.RESEARCH_CREATED,
@@ -181,7 +260,7 @@ def test_serialization_and_deserialization():
         research_run_id="run_001",
         experiment_id="exp_01",
         execution_id="exec_01",
-        payload={"accuracy": 0.942, "p_value": 0.003},
+        payload={"accuracy": 0.942, "p_value": 0.003, "samples": [1, 2, 3]},
     )
 
     # Dictionary export
@@ -190,7 +269,10 @@ def test_serialization_and_deserialization():
     assert d["event_type"] == "analysis_completed"
     assert d["actor"] == "system"
     assert d["research_run_id"] == "run_001"
+    assert isinstance(d["payload"], dict)
     assert d["payload"]["accuracy"] == 0.942
+    assert isinstance(d["payload"]["samples"], list)
+    assert d["payload"]["samples"] == [1, 2, 3]
 
     # JSON export
     json_str = event.to_json()
@@ -198,6 +280,8 @@ def test_serialization_and_deserialization():
     assert parsed["event_id"] == event.event_id
     assert parsed["event_type"] == "analysis_completed"
     assert "timestamp" in parsed
+    assert parsed["payload"]["accuracy"] == 0.942
+    assert parsed["payload"]["samples"] == [1, 2, 3]
 
 
 def test_in_memory_event_sink_and_emitter():
