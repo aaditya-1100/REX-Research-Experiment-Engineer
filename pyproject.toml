@@ -48,6 +48,11 @@ minversion = "8.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "docker: marks tests that require Docker daemon",
+    "integration: marks integration tests",
+    "unit: marks unit tests",
+]
 
 [tool.ruff]
 line-length = 100

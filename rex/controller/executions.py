@@ -99,11 +99,13 @@ VALID_EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] =
             ExecutionStatus.COMPLETED,
             ExecutionStatus.FAILED,
             ExecutionStatus.CANCELLED,
+            ExecutionStatus.TIMEOUT,
         }
     ),
     ExecutionStatus.COMPLETED: frozenset(),
     ExecutionStatus.FAILED: frozenset(),
     ExecutionStatus.CANCELLED: frozenset(),
+    ExecutionStatus.TIMEOUT: frozenset(),
 }
 
 

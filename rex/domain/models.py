@@ -144,6 +144,7 @@ class ExecutionStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
 
 
 TERMINAL_EXECUTION_STATUSES: frozenset[ExecutionStatus] = frozenset(
@@ -151,6 +152,7 @@ TERMINAL_EXECUTION_STATUSES: frozenset[ExecutionStatus] = frozenset(
         ExecutionStatus.COMPLETED,
         ExecutionStatus.FAILED,
         ExecutionStatus.CANCELLED,
+        ExecutionStatus.TIMEOUT,
     }
 )
 
