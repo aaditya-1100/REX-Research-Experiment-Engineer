@@ -49,3 +49,9 @@ htmlcov/
 # Keep repository clean while allowing tests to use temporary dirs
 experiments_run/
 temp/
+
+# Database & Runtime Artifacts
+*.db
+*.sqlite
+*.sqlite3
+/data/
