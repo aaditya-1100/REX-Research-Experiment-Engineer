@@ -111,8 +111,8 @@ class TestWorkspaceSecurity:
             assert len(a.content_hash) == 64
             assert a.size_bytes > 0
 
-    def test_symlink_escape_rejected(self, tmp_path: Path) -> None:
-        outside_file = tmp_path / "secret_outside.txt"
+    def test_symlink_escape_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        outside_file = (tmp_path / "secret_outside.txt").resolve()
         outside_file.write_text("classified data", encoding="utf-8")
 
         mgr = WorkspaceManager(base_root=tmp_path / "ws_root")
@@ -124,12 +124,34 @@ class TestWorkspaceSecurity:
         )
         ws = mgr.prepare_workspace(req)
 
-        # Attempt to create symlink in output pointing outside workspace
+        # Attempt to create real symlink in output pointing outside workspace
         symlink_path = ws.output_dir / "leak_symlink.txt"
+        symlink_created = False
         try:
             symlink_path.symlink_to(outside_file)
+            symlink_created = True
         except OSError:
-            pytest.skip("Symlink creation not permitted in this OS environment")
+            pass
+
+        if not symlink_created:
+            # If the host OS restricts symlink creation without elevated privileges (e.g. Windows),
+            # verify the path containment logic deterministically by mocking the link resolution
+            symlink_path.write_text("mocked symlink content", encoding="utf-8")
+            orig_is_symlink = Path.is_symlink
+            orig_resolve = Path.resolve
+
+            def mock_is_symlink(self_path: Path) -> bool:
+                if self_path.name == "leak_symlink.txt":
+                    return True
+                return orig_is_symlink(self_path)
+
+            def mock_resolve(self_path: Path, strict: bool = False) -> Path:
+                if self_path.name == "leak_symlink.txt":
+                    return outside_file
+                return orig_resolve(self_path, strict=strict)
+
+            monkeypatch.setattr(Path, "is_symlink", mock_is_symlink)
+            monkeypatch.setattr(Path, "resolve", mock_resolve)
 
         with pytest.raises(SymlinkEscapeError, match="escapes workspace boundary"):
             mgr.collect_output_artifacts(ws)
