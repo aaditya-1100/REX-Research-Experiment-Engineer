@@ -87,3 +87,42 @@ class MissingHypothesisError(StateMachineError):
     def __init__(self, hypothesis_id: str) -> None:
         self.hypothesis_id = hypothesis_id
         super().__init__(f"Hypothesis '{hypothesis_id}' not found.")
+
+
+class MissingExperimentError(StateMachineError):
+    """Raised when an operation references a non-existent experiment ID."""
+
+    def __init__(self, experiment_id: str) -> None:
+        self.experiment_id = experiment_id
+        super().__init__(f"Experiment '{experiment_id}' not found.")
+
+
+class InvalidExperimentStateTransitionError(StateMachineError):
+    """Raised when an invalid experiment status transition is attempted."""
+
+    def __init__(
+        self,
+        experiment_id: str,
+        current_status: str,
+        target_status: str,
+        message: str | None = None,
+    ) -> None:
+        self.experiment_id = experiment_id
+        self.current_status = current_status
+        self.target_status = target_status
+        super().__init__(
+            message
+            or f"Cannot transition experiment '{experiment_id}' from '{current_status}' to '{target_status}'."
+        )
+
+
+class ExperimentExecutionExistsError(StateMachineError):
+    """Raised when attempting to modify an experiment specification that already has executions."""
+
+    def __init__(self, experiment_id: str, execution_count: int = 1) -> None:
+        self.experiment_id = experiment_id
+        self.execution_count = execution_count
+        super().__init__(
+            f"Cannot modify experiment '{experiment_id}' because {execution_count} execution(s) "
+            "already exist. Scientific experiment specifications are immutable once execution begins."
+        )

@@ -22,6 +22,7 @@ class EventType(StrEnum):
     RESEARCH_STATE_CHANGED = "research_state_changed"
     HYPOTHESIS_CREATED = "hypothesis_created"
     EXPERIMENT_CREATED = "experiment_created"
+    EXPERIMENT_STATUS_CHANGED = "experiment_status_changed"
     EXECUTION_STARTED = "execution_started"
     EXECUTION_COMPLETED = "execution_completed"
     EXECUTION_FAILED = "execution_failed"

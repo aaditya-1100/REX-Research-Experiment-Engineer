@@ -125,6 +125,14 @@ class ExperimentRepository(BaseRepository):
         )
         return self.session.scalars(stmt).all()
 
+    def list_by_parent(self, parent_experiment_id: str) -> Sequence[ExperimentModel]:
+        stmt = (
+            select(ExperimentModel)
+            .where(ExperimentModel.parent_experiment_id == parent_experiment_id)
+            .order_by(ExperimentModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
     def update_status(self, experiment_id: str, status: str) -> ExperimentModel | None:
         exp = self.get_by_id(experiment_id)
         if exp is not None:
