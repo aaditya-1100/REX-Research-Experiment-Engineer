@@ -1,7 +1,7 @@
-"""REX Research Run Domain Model and Lifecycle States (REX-005).
+"""REX Domain Entities and Lifecycle Vocabulary (REX-005, REX-006).
 
-Defines strongly typed domain representations for research investigations and the
-authoritative research lifecycle state enum.
+Defines strongly typed domain representations for research investigations, hypotheses,
+and authoritative lifecycle states.
 """
 
 import uuid
@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from rex.persistence.models import ResearchRunModel
+from rex.persistence.models import HypothesisModel, ResearchRunModel
 
 
 class ResearchState(StrEnum):
@@ -53,9 +53,37 @@ TERMINAL_STATES: frozenset[ResearchState] = frozenset(
 )
 
 
+class HypothesisStatus(StrEnum):
+    """Explicit, type-safe vocabulary for individual research hypothesis statuses."""
+
+    PROPOSED = "proposed"
+    ACTIVE = "active"
+    TESTING = "testing"
+    VALIDATED = "validated"
+    SUPPORTED = "supported"
+    FALSIFIED = "falsified"
+    REJECTED = "rejected"
+    INCONCLUSIVE = "inconclusive"
+
+
+class ExpectedDirection(StrEnum):
+    """Measurable expected direction of the experimental effect."""
+
+    INCREASE = "increase"
+    DECREASE = "decrease"
+    NO_CHANGE = "no_change"
+    NON_ZERO = "non_zero"
+    OTHER = "other"
+
+
 def _gen_run_id() -> str:
     """Generate a stable, unique research run identifier."""
     return f"run_{uuid.uuid4().hex[:12]}"
+
+
+def _gen_hypothesis_id() -> str:
+    """Generate a stable, unique hypothesis identifier."""
+    return f"hyp_{uuid.uuid4().hex[:12]}"
 
 
 class ResearchRun(BaseModel):
@@ -158,4 +186,117 @@ class ResearchRun(BaseModel):
             updated_at=self.updated_at,
             configuration_json=config_dict,
             budget_json=dict(self.budget),
+        )
+
+
+class Hypothesis(BaseModel):
+    """Immutable domain representation of a scientific research hypothesis.
+
+    Captures the testable scientific proposition, expected direction of effect,
+    falsification conditions, and current validation status.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=_gen_hypothesis_id, description="Stable unique hypothesis ID")
+    research_run_id: str = Field(description="ID of associated research run")
+    statement: str = Field(description="Explicit scientific hypothesis statement")
+    rationale: str = Field(default="", description="Theoretical or empirical motivation")
+    expected_direction: ExpectedDirection = Field(
+        default=ExpectedDirection.INCREASE,
+        description="Measurable expected direction of effect",
+    )
+    falsification_condition: str = Field(
+        description="Deterministic condition that disproves or rejects the hypothesis"
+    )
+    status: HypothesisStatus = Field(
+        default=HypothesisStatus.PROPOSED,
+        description="Current lifecycle status of the hypothesis",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="UTC timestamp of hypothesis creation",
+    )
+
+    @field_validator("id", "research_run_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Identifier must be a non-empty string.")
+        return cleaned
+
+    @field_validator("statement")
+    @classmethod
+    def _validate_statement(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Hypothesis statement must be a non-empty string.")
+        return cleaned
+
+    @field_validator("falsification_condition")
+    @classmethod
+    def _validate_falsification_condition(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Falsification condition must be a non-empty string.")
+        return cleaned
+
+    @field_validator("created_at")
+    @classmethod
+    def _validate_timezone_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v.astimezone(UTC)
+
+    def with_status(self, new_status: HypothesisStatus | str) -> "Hypothesis":
+        """Return a new immutable Hypothesis with updated status, preserving all scientific content."""
+        status_enum = (
+            new_status if isinstance(new_status, HypothesisStatus) else HypothesisStatus(new_status)
+        )
+        return Hypothesis(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            statement=self.statement,
+            rationale=self.rationale,
+            expected_direction=self.expected_direction,
+            falsification_condition=self.falsification_condition,
+            status=status_enum,
+            created_at=self.created_at,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: HypothesisModel) -> "Hypothesis":
+        """Reconstruct a domain Hypothesis from a SQLAlchemy persistence model."""
+        created_ts = model.created_at
+        if created_ts.tzinfo is None:
+            created_ts = created_ts.replace(tzinfo=UTC)
+
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            statement=model.statement,
+            rationale=model.rationale,
+            expected_direction=ExpectedDirection(model.expected_direction),
+            falsification_condition=model.falsification_condition,
+            status=HypothesisStatus(model.status),
+            created_at=created_ts,
+        )
+
+    def to_persistence(self) -> HypothesisModel:
+        """Convert domain Hypothesis to a SQLAlchemy persistence model."""
+        return HypothesisModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            statement=self.statement,
+            rationale=self.rationale,
+            expected_direction=self.expected_direction.value,
+            falsification_condition=self.falsification_condition,
+            status=self.status.value,
+            created_at=self.created_at,
         )

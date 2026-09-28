@@ -79,3 +79,11 @@ class ActorAuthorizationError(StateMachineError):
             f"Actor '{actor}' is not authorized to transition research run from "
             f"'{current_state}' to '{target_state}'."
         )
+
+
+class MissingHypothesisError(StateMachineError):
+    """Raised when an operation references a non-existent hypothesis ID."""
+
+    def __init__(self, hypothesis_id: str) -> None:
+        self.hypothesis_id = hypothesis_id
+        super().__init__(f"Hypothesis '{hypothesis_id}' not found.")
