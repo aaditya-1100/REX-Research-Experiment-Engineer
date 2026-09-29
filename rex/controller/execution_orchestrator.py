@@ -13,9 +13,10 @@ Coordinates the end-to-end execution lifecycle across research runs:
 import hashlib
 import logging
 import shlex
+import threading
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -78,6 +79,16 @@ logger = logging.getLogger(__name__)
 class ExecutionOrchestrator:
     """Production execution orchestration service managing sandbox lifecycles and budgets."""
 
+    _run_locks: ClassVar[dict[str, threading.Lock]] = {}
+    _master_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    def _get_run_lock(cls, research_run_id: str) -> threading.Lock:
+        with cls._master_lock:
+            if research_run_id not in cls._run_locks:
+                cls._run_locks[research_run_id] = threading.Lock()
+            return cls._run_locks[research_run_id]
+
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -137,174 +148,189 @@ class ExecutionOrchestrator:
                 target_state="run_execution",
             )
 
+        # Resolve target research run ID to acquire run-level reservation lock
+        with get_db_session(self.session_factory) as init_session:
+            init_exec = init_session.get(ExecutionModel, execution_id)
+            if init_exec is None:
+                raise MissingExecutionError(execution_id)
+            init_exp = init_session.get(ExperimentModel, init_exec.experiment_id)
+            if init_exp is None:
+                raise MissingExperimentError(init_exec.experiment_id)
+            target_run_id = init_exp.research_run_id
+
+        run_lock = self._get_run_lock(target_run_id)
+
         # ---------------------------------------------------------------------
         # PHASE 1: Pre-flight Validation & Status Reservation (Short Transaction)
         # ---------------------------------------------------------------------
-        with get_db_session(self.session_factory) as session:
-            exec_model = session.get(ExecutionModel, execution_id)
-            if exec_model is None:
-                raise MissingExecutionError(execution_id)
+        with run_lock:  # noqa: SIM117
+            with get_db_session(self.session_factory) as session:
+                exec_model = session.get(ExecutionModel, execution_id)
+                if exec_model is None:
+                    raise MissingExecutionError(execution_id)
 
-            # Check execution status invariants
-            if exec_model.status == ExecutionStatus.RUNNING.value:
-                raise ExecutionAlreadyRunningError(execution_id)
-            if exec_model.status in [s.value for s in TERMINAL_EXECUTION_STATUSES]:
-                raise ExecutionAlreadyTerminalError(execution_id, exec_model.status)
-            if exec_model.status != ExecutionStatus.PENDING.value:
-                raise InvalidExecutionStateTransitionError(
-                    execution_id=execution_id,
-                    current_status=exec_model.status,
-                    target_status=ExecutionStatus.RUNNING.value,
-                )
-
-            exp_model = session.get(ExperimentModel, exec_model.experiment_id)
-            if exp_model is None:
-                raise MissingExperimentError(exec_model.experiment_id)
-
-            run_model = session.get(ResearchRunModel, exp_model.research_run_id)
-            if run_model is None:
-                raise MissingResearchRunError(exp_model.research_run_id)
-
-            # Enforce research run lifecycle constraints
-            is_terminal = False
-            try:
-                run_state = ResearchState(run_model.status)
-                if run_state in TERMINAL_STATES:
-                    is_terminal = True
-            except ValueError:
-                if run_model.status in ("COMPLETE", "COMPLETED", "FAILED", "STOP", "ARCHIVED"):
-                    is_terminal = True
-
-            if is_terminal:
-                raise StateMachineError(
-                    f"Cannot execute in research run '{run_model.id}' with terminal state '{run_model.status}'."
-                )
-            if run_model.status in ("PAUSED", "STOPPED"):
-                raise StateMachineError(
-                    f"Cannot execute in research run '{run_model.id}' with inactive state '{run_model.status}'."
-                )
-
-            # Enforce research run budget limits
-            budget = load_run_budget(run_model)
-            usage = compute_budget_usage(session, run_model.id)
-
-            effective_limits = limits or ResourceLimits.from_settings()
-
-            try:
-                check_budget_limits(
-                    budget=budget,
-                    usage=usage,
-                    run_id=run_model.id,
-                    is_launching_execution=True,
-                    requested_limits=effective_limits,
-                )
-            except (BudgetExceededError, ConcurrencyLimitExceededError) as budget_err:
-                record_budget_exceeded_event(
-                    session=session,
-                    research_run_id=run_model.id,
-                    dimension=budget_err.dimension,
-                    limit=budget_err.limit,
-                    current_usage=budget_err.current_usage,
-                    actor=actor_enum,
-                    event_sink=self.event_sink,
-                    context=context,
-                )
-                raise
-
-            # Atomic transition PENDING -> RUNNING with optimistic concurrency protection
-            now = datetime.now(UTC)
-            updated_count = (
-                session.query(ExecutionModel)
-                .filter(
-                    ExecutionModel.id == execution_id,
-                    ExecutionModel.status == ExecutionStatus.PENDING.value,
-                )
-                .update(
-                    {
-                        ExecutionModel.status: ExecutionStatus.RUNNING.value,
-                        ExecutionModel.started_at: now,
-                    },
-                    synchronize_session=False,
-                )
-            )
-
-            if updated_count == 0:
-                # Concurrency conflict detected: another worker transitioned this record
-                rechecked = session.get(ExecutionModel, execution_id)
-                if rechecked and rechecked.status == ExecutionStatus.RUNNING.value:
+                # Check execution status invariants
+                if exec_model.status == ExecutionStatus.RUNNING.value:
                     raise ExecutionAlreadyRunningError(execution_id)
-                if rechecked and rechecked.status in [s.value for s in TERMINAL_EXECUTION_STATUSES]:
-                    raise ExecutionAlreadyTerminalError(execution_id, rechecked.status)
-                status_str = rechecked.status if rechecked else "unknown"
-                raise InvalidExecutionStateTransitionError(
-                    execution_id=execution_id,
-                    current_status=status_str,
-                    target_status=ExecutionStatus.RUNNING.value,
+                if exec_model.status in [s.value for s in TERMINAL_EXECUTION_STATUSES]:
+                    raise ExecutionAlreadyTerminalError(execution_id, exec_model.status)
+                if exec_model.status != ExecutionStatus.PENDING.value:
+                    raise InvalidExecutionStateTransitionError(
+                        execution_id=execution_id,
+                        current_status=exec_model.status,
+                        target_status=ExecutionStatus.RUNNING.value,
+                    )
+
+                exp_model = session.get(ExperimentModel, exec_model.experiment_id)
+                if exp_model is None:
+                    raise MissingExperimentError(exec_model.experiment_id)
+
+                run_model = session.get(ResearchRunModel, exp_model.research_run_id)
+                if run_model is None:
+                    raise MissingResearchRunError(exp_model.research_run_id)
+
+                # Enforce research run lifecycle constraints
+                is_terminal = False
+                try:
+                    run_state = ResearchState(run_model.status)
+                    if run_state in TERMINAL_STATES:
+                        is_terminal = True
+                except ValueError:
+                    if run_model.status in ("COMPLETE", "COMPLETED", "FAILED", "STOP", "ARCHIVED"):
+                        is_terminal = True
+
+                if is_terminal:
+                    raise StateMachineError(
+                        f"Cannot execute in research run '{run_model.id}' with terminal state '{run_model.status}'."
+                    )
+                if run_model.status in ("PAUSED", "STOPPED"):
+                    raise StateMachineError(
+                        f"Cannot execute in research run '{run_model.id}' with inactive state '{run_model.status}'."
+                    )
+
+                # Enforce research run budget limits
+                budget = load_run_budget(run_model)
+                usage = compute_budget_usage(session, run_model.id)
+
+                effective_limits = limits or ResourceLimits.from_settings()
+
+                try:
+                    check_budget_limits(
+                        budget=budget,
+                        usage=usage,
+                        run_id=run_model.id,
+                        is_launching_execution=True,
+                        requested_limits=effective_limits,
+                    )
+                except (BudgetExceededError, ConcurrencyLimitExceededError) as budget_err:
+                    record_budget_exceeded_event(
+                        session=session,
+                        research_run_id=run_model.id,
+                        dimension=budget_err.dimension,
+                        limit=budget_err.limit,
+                        current_usage=budget_err.current_usage,
+                        actor=actor_enum,
+                        event_sink=self.event_sink,
+                        context=context,
+                    )
+                    raise
+
+                # Atomic transition PENDING -> RUNNING with optimistic concurrency protection
+                now = datetime.now(UTC)
+                updated_count = (
+                    session.query(ExecutionModel)
+                    .filter(
+                        ExecutionModel.id == execution_id,
+                        ExecutionModel.status == ExecutionStatus.PENDING.value,
+                    )
+                    .update(
+                        {
+                            ExecutionModel.status: ExecutionStatus.RUNNING.value,
+                            ExecutionModel.started_at: now,
+                        },
+                        synchronize_session=False,
+                    )
                 )
 
-            # Sync parent experiment status to RUNNING if pending or designed
-            if exp_model.status in (
-                ExperimentStatus.DESIGNED.value,
-                ExperimentStatus.PENDING.value,
-            ):
-                update_experiment_status(
-                    session=session,
-                    experiment_id=exp_model.id,
-                    new_status=ExperimentStatus.RUNNING,
+                if updated_count == 0:
+                    # Concurrency conflict detected: another worker transitioned this record
+                    rechecked = session.get(ExecutionModel, execution_id)
+                    if rechecked and rechecked.status == ExecutionStatus.RUNNING.value:
+                        raise ExecutionAlreadyRunningError(execution_id)
+                    if rechecked and rechecked.status in [
+                        s.value for s in TERMINAL_EXECUTION_STATUSES
+                    ]:
+                        raise ExecutionAlreadyTerminalError(execution_id, rechecked.status)
+                    status_str = rechecked.status if rechecked else "unknown"
+                    raise InvalidExecutionStateTransitionError(
+                        execution_id=execution_id,
+                        current_status=status_str,
+                        target_status=ExecutionStatus.RUNNING.value,
+                    )
+
+                # Sync parent experiment status to RUNNING if pending or designed
+                if exp_model.status in (
+                    ExperimentStatus.DESIGNED.value,
+                    ExperimentStatus.PENDING.value,
+                ):
+                    update_experiment_status(
+                        session=session,
+                        experiment_id=exp_model.id,
+                        new_status=ExperimentStatus.RUNNING,
+                        actor=actor_enum,
+                        reason=f"Execution '{execution_id}' launched in sandbox.",
+                        event_sink=self.event_sink,
+                        context=context,
+                    )
+
+                # Record EXECUTION_STARTED audit event
+                start_payload: dict[str, Any] = {
+                    "execution_id": execution_id,
+                    "experiment_id": exp_model.id,
+                    "research_run_id": run_model.id,
+                    "status": ExecutionStatus.RUNNING.value,
+                    "command": exec_model.command,
+                    "seed": exec_model.seed,
+                }
+                if context:
+                    start_payload.update(context)
+
+                start_event = create_event(
+                    event_type=EventType.EXECUTION_STARTED,
                     actor=actor_enum,
-                    reason=f"Execution '{execution_id}' launched in sandbox.",
-                    event_sink=self.event_sink,
-                    context=context,
+                    research_run_id=run_model.id,
+                    experiment_id=exp_model.id,
+                    execution_id=execution_id,
+                    payload=start_payload,
                 )
+                EventRepository(session).record_event(start_event)
+                session.flush()
 
-            # Record EXECUTION_STARTED audit event
-            start_payload: dict[str, Any] = {
-                "execution_id": execution_id,
-                "experiment_id": exp_model.id,
-                "research_run_id": run_model.id,
-                "status": ExecutionStatus.RUNNING.value,
-                "command": exec_model.command,
-                "seed": exec_model.seed,
-            }
-            if context:
-                start_payload.update(context)
+                if self.event_sink is not None:
+                    self.event_sink.emit(start_event)
 
-            start_event = create_event(
-                event_type=EventType.EXECUTION_STARTED,
-                actor=actor_enum,
-                research_run_id=run_model.id,
-                experiment_id=exp_model.id,
-                execution_id=execution_id,
-                payload=start_payload,
-            )
-            EventRepository(session).record_event(start_event)
-            session.flush()
+                # Extract request parameters for sandbox invocation
+                cmd_list: list[str]
+                if command is not None:
+                    cmd_list = command
+                elif exec_model.command:
+                    cmd_list = shlex.split(exec_model.command)
+                else:
+                    cmd_list = ["python", "src/main.py"]
 
-            if self.event_sink is not None:
-                self.event_sink.emit(start_event)
-
-            # Extract request parameters for sandbox invocation
-            cmd_list: list[str]
-            if command is not None:
-                cmd_list = command
-            elif exec_model.command:
-                cmd_list = shlex.split(exec_model.command)
-            else:
-                cmd_list = ["python", "src/main.py"]
-
-            request = ExecutionRequest(
-                execution_id=exec_model.id,
-                experiment_id=exp_model.id,
-                research_run_id=run_model.id,
-                command=cmd_list,
-                code_files=code_files,
-                image=image,
-                environment_variables=environment_variables or {},
-                limits=effective_limits,
-                network_disabled=network_disabled,
-                non_root_user=non_root_user,
-                seed=exec_model.seed,
-            )
+                request = ExecutionRequest(
+                    execution_id=exec_model.id,
+                    experiment_id=exp_model.id,
+                    research_run_id=run_model.id,
+                    command=cmd_list,
+                    code_files=code_files,
+                    image=image,
+                    environment_variables=environment_variables or {},
+                    limits=effective_limits,
+                    network_disabled=network_disabled,
+                    non_root_user=non_root_user,
+                    seed=exec_model.seed,
+                )
 
         # ---------------------------------------------------------------------
         # PHASE 2: Sandboxed Backend Execution (Strictly Outside DB Transaction)
@@ -398,14 +424,51 @@ class ExecutionOrchestrator:
                     event_sink=self.event_sink,
                 )
 
-            # 5. Transition execution to terminal outcome status
+            # 5. Enforce post-flight artifact volume budget
+            final_status = outcome.status
+            final_reason = outcome.failure_reason
+
+            exp_model = session.get(ExperimentModel, exec_model.experiment_id)
+            if exp_model:
+                run_model = session.get(ResearchRunModel, exp_model.research_run_id)
+                if run_model:
+                    budget = load_run_budget(run_model)
+                    usage = compute_budget_usage(session, run_model.id)
+                    if usage.total_artifact_bytes > budget.max_artifact_volume_bytes:
+                        record_budget_exceeded_event(
+                            session=session,
+                            research_run_id=run_model.id,
+                            dimension="max_artifact_volume_bytes",
+                            limit=budget.max_artifact_volume_bytes,
+                            current_usage=usage.total_artifact_bytes,
+                            actor=actor_enum,
+                            event_sink=self.event_sink,
+                            context=context,
+                        )
+                        if final_status == ExecutionStatus.COMPLETED:
+                            final_status = ExecutionStatus.FAILED
+                            final_reason = (
+                                f"Research run artifact volume budget exceeded: "
+                                f"{usage.total_artifact_bytes} bytes > {budget.max_artifact_volume_bytes} bytes."
+                            )
+
+            # If execution was cancelled during backend execution, respect terminal status
+            if exec_model.status in [s.value for s in TERMINAL_EXECUTION_STATUSES]:
+                if outcome.exit_code is not None:
+                    exec_model.exit_code = outcome.exit_code
+                if outcome.resource_usage is not None:
+                    exec_model.resource_usage_json = dict(outcome.resource_usage)
+                session.flush()
+                return Execution.from_persistence(exec_model), outcome
+
+            # 6. Transition execution to terminal outcome status
             updated_execution = update_execution_status(
                 session=session,
                 execution_id=execution_id,
-                new_status=outcome.status,
+                new_status=final_status,
                 exit_code=outcome.exit_code,
                 resource_usage=outcome.resource_usage,
-                reason=outcome.failure_reason,
+                reason=final_reason,
                 actor=actor_enum,
                 event_sink=self.event_sink,
                 context=context,

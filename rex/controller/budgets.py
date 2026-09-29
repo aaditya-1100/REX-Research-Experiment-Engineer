@@ -153,12 +153,27 @@ def compute_budget_usage(session: Session, research_run_id: str) -> BudgetUsage:
         .all()
     )
 
-    executions_count = len(executions)
+    ADMITTED_EXECUTION_STATUSES = frozenset(
+        {
+            ExecutionStatus.RUNNING.value,
+            ExecutionStatus.COMPLETED.value,
+            ExecutionStatus.FAILED.value,
+            ExecutionStatus.TIMEOUT.value,
+        }
+    )
+
+    admitted_count = 0
     concurrent_count = 0
     total_runtime = 0.0
     now = datetime.now(UTC)
 
     for ex in executions:
+        is_admitted = ex.status in ADMITTED_EXECUTION_STATUSES or (
+            ex.status == ExecutionStatus.CANCELLED.value and ex.started_at is not None
+        )
+        if is_admitted:
+            admitted_count += 1
+
         if ex.status == ExecutionStatus.RUNNING.value:
             concurrent_count += 1
 
@@ -232,7 +247,7 @@ def compute_budget_usage(session: Session, research_run_id: str) -> BudgetUsage:
 
     return BudgetUsage(
         experiments_count=experiments_count,
-        executions_count=executions_count,
+        executions_count=admitted_count,
         concurrent_executions_count=concurrent_count,
         total_runtime_seconds=total_runtime,
         total_artifact_bytes=artifact_bytes,
@@ -271,13 +286,22 @@ def check_budget_limits(
         )
 
     # 2. Check total executions cap
-    if usage.executions_count > budget.max_executions:
-        raise BudgetExceededError(
-            dimension="max_executions",
-            limit=budget.max_executions,
-            current_usage=usage.executions_count,
-            run_id=run_id,
-        )
+    if is_launching_execution:
+        if usage.executions_count >= budget.max_executions:
+            raise BudgetExceededError(
+                dimension="max_executions",
+                limit=budget.max_executions,
+                current_usage=usage.executions_count,
+                run_id=run_id,
+            )
+    else:
+        if usage.executions_count > budget.max_executions:
+            raise BudgetExceededError(
+                dimension="max_executions",
+                limit=budget.max_executions,
+                current_usage=usage.executions_count,
+                run_id=run_id,
+            )
 
     # 3. Check total experiments cap
     if usage.experiments_count > budget.max_experiments:

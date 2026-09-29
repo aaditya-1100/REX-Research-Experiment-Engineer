@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from rex.controller.exceptions import (
     ActorAuthorizationError,
+    BudgetExceededError,
     ExperimentExecutionExistsError,
     InvalidExperimentStateTransitionError,
     MissingExperimentError,
@@ -146,6 +147,36 @@ def create_experiment(
     run_model = session.get(ResearchRunModel, research_run_id)
     if run_model is None:
         raise MissingResearchRunError(research_run_id)
+
+    # 2b. Enforce research run experiment budget (REX-011)
+    from sqlalchemy import func
+
+    from rex.controller.budgets import load_run_budget, record_budget_exceeded_event
+
+    budget = load_run_budget(run_model)
+    current_experiments_count = (
+        session.query(func.count(ExperimentModel.id))
+        .filter(ExperimentModel.research_run_id == research_run_id)
+        .scalar()
+        or 0
+    )
+    if current_experiments_count >= budget.max_experiments:
+        record_budget_exceeded_event(
+            session=session,
+            research_run_id=research_run_id,
+            dimension="max_experiments",
+            limit=budget.max_experiments,
+            current_usage=current_experiments_count,
+            actor=actor_enum,
+            event_sink=event_sink,
+            context=context,
+        )
+        raise BudgetExceededError(
+            dimension="max_experiments",
+            limit=budget.max_experiments,
+            current_usage=current_experiments_count,
+            run_id=research_run_id,
+        )
 
     # 3. Enforce hypothesis referential integrity if provided
     if hypothesis_id is not None:
