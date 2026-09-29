@@ -1,11 +1,24 @@
-"""REX Controller Module (REX-005, REX-006, REX-007, REX-008).
+"""REX Controller Module (REX-005, REX-006, REX-007, REX-008, REX-010, REX-011).
 
 Exports the state machine, hypothesis controller, experiment controller,
-execution/result/artifact controllers, domain exceptions, and lifecycle management helpers.
+execution/result/artifact controllers, execution orchestrator, budget accounting,
+domain exceptions, and lifecycle management helpers.
 """
 
+from rex.controller.budgets import (
+    BudgetUsage,
+    ResearchBudget,
+    check_budget_limits,
+    compute_budget_usage,
+    load_run_budget,
+    record_budget_exceeded_event,
+)
 from rex.controller.exceptions import (
     ActorAuthorizationError,
+    BudgetExceededError,
+    ConcurrencyLimitExceededError,
+    ExecutionAlreadyRunningError,
+    ExecutionAlreadyTerminalError,
     ExperimentExecutionExistsError,
     InvalidExecutionStateTransitionError,
     InvalidExperimentStateTransitionError,
@@ -20,6 +33,7 @@ from rex.controller.exceptions import (
     StateMachineError,
     TerminalStateError,
 )
+from rex.controller.execution_orchestrator import ExecutionOrchestrator
 from rex.controller.executions import (
     ARTIFACT_CREATOR_ACTORS,
     EXECUTION_CREATOR_ACTORS,
@@ -66,6 +80,12 @@ __all__ = [
     "VALID_EXECUTION_TRANSITIONS",
     "VALID_EXPERIMENT_TRANSITIONS",
     "ActorAuthorizationError",
+    "BudgetExceededError",
+    "BudgetUsage",
+    "ConcurrencyLimitExceededError",
+    "ExecutionAlreadyRunningError",
+    "ExecutionAlreadyTerminalError",
+    "ExecutionOrchestrator",
     "ExperimentExecutionExistsError",
     "InvalidExecutionStateTransitionError",
     "InvalidExperimentStateTransitionError",
@@ -76,12 +96,15 @@ __all__ = [
     "MissingHypothesisError",
     "MissingResearchRunError",
     "MissingResultError",
+    "ResearchBudget",
     "ResearchStateMachine",
     "StaleStateError",
     "StateMachineError",
     "StateTransitionResult",
     "TerminalStateError",
     "assert_experiment_mutable",
+    "check_budget_limits",
+    "compute_budget_usage",
     "create_execution",
     "create_execution_run",
     "create_experiment",
@@ -89,7 +112,9 @@ __all__ = [
     "create_hypothesis",
     "create_hypothesis_run",
     "create_research_run",
+    "load_run_budget",
     "record_artifact",
+    "record_budget_exceeded_event",
     "record_result",
     "record_results_batch",
     "transition_run",

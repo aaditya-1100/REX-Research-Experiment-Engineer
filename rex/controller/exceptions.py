@@ -169,3 +169,73 @@ class InvalidExecutionStateTransitionError(StateMachineError):
             message
             or f"Cannot transition execution '{execution_id}' from '{current_status}' to '{target_status}'."
         )
+
+
+class BudgetExceededError(StateMachineError):
+    """Raised when an operation would exceed an active research budget constraint (REX-011)."""
+
+    def __init__(
+        self,
+        dimension: str,
+        limit: object,
+        current_usage: object,
+        run_id: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        self.dimension = dimension
+        self.limit = limit
+        self.current_usage = current_usage
+        self.run_id = run_id
+        super().__init__(
+            message
+            or (
+                f"Research budget exceeded for '{dimension}' in run '{run_id or 'unknown'}': "
+                f"usage {current_usage} reached or exceeded limit of {limit}."
+            )
+        )
+
+
+class ConcurrencyLimitExceededError(BudgetExceededError):
+    """Raised when an execution cannot be started because concurrent execution slots are exhausted (REX-010/011)."""
+
+    def __init__(
+        self,
+        limit: int,
+        current_usage: int,
+        run_id: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        super().__init__(
+            dimension="max_concurrent_executions",
+            limit=limit,
+            current_usage=current_usage,
+            run_id=run_id,
+            message=(
+                message
+                or (
+                    f"Concurrency limit exceeded for run '{run_id or 'unknown'}': "
+                    f"{current_usage} active execution(s) reached limit of {limit}."
+                )
+            ),
+        )
+
+
+class ExecutionAlreadyRunningError(StateMachineError):
+    """Raised when attempting to start an execution that is already in RUNNING status."""
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(
+            f"Execution '{execution_id}' is already running. Duplicate start rejected."
+        )
+
+
+class ExecutionAlreadyTerminalError(StateMachineError):
+    """Raised when attempting to transition or execute an execution that is already in a terminal status."""
+
+    def __init__(self, execution_id: str, status: str) -> None:
+        self.execution_id = execution_id
+        self.status = status
+        super().__init__(
+            f"Execution '{execution_id}' is in terminal status '{status}' and cannot be executed."
+        )
