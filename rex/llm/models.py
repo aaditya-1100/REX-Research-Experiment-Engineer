@@ -114,6 +114,11 @@ class LLMRequest(BaseModel):
     context: Mapping[str, Any] = Field(
         default_factory=dict, description="Structured contextual parameters"
     )
+    estimated_cost: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Estimated token cost in USD for pre-flight budget reservation",
+    )
 
     @field_validator("user_prompt")
     @classmethod

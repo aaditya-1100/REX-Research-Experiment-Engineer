@@ -10,7 +10,6 @@ from typing import TypeVar
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from rex.llm.accounting import check_llm_budget, record_llm_usage_event
 from rex.llm.base import LLMProvider
 from rex.llm.models import LLMRequest, LLMResponse
 from rex.llm.providers.factory import get_llm_provider
@@ -46,17 +45,7 @@ class BaseAgent:
         actor: ActorType = ActorType.RESEARCH_AGENT,
         max_repair_attempts: int = 1,
     ) -> tuple[T, LLMResponse]:
-        """Execute a structured generation request with pre-flight budget enforcement and telemetry logging."""
-        # 1. Enforce LLM budget if session and run_id provided
-        if session is not None and request.research_run_id is not None:
-            check_llm_budget(
-                session=session,
-                research_run_id=request.research_run_id,
-                actor=actor,
-                event_sink=self.event_sink,
-            )
-
-        # 2. Tag request metadata
+        """Execute a structured generation request with atomic pre-flight budget reservation and telemetry logging."""
         tagged_request = request.model_copy(
             update={
                 "agent_name": self.agent_name,
@@ -64,21 +53,11 @@ class BaseAgent:
             }
         )
 
-        # 3. Perform generation and validation
-        parsed_obj, response = self.structured_generator.generate_structured(
+        return self.structured_generator.generate_structured(
             request=tagged_request,
             response_model=response_model,
             max_repair_attempts=max_repair_attempts,
+            session=session,
+            actor=actor,
+            event_sink=self.event_sink,
         )
-
-        # 4. Record usage event in persistent audit log
-        if session is not None and request.research_run_id is not None:
-            record_llm_usage_event(
-                session=session,
-                request=tagged_request,
-                response=response,
-                actor=actor,
-                event_sink=self.event_sink,
-            )
-
-        return parsed_obj, response

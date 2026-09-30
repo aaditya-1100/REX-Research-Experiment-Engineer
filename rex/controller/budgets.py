@@ -227,6 +227,7 @@ def compute_budget_usage(session: Session, research_run_id: str) -> BudgetUsage:
                     EventType.AGENT_ACTION.value,
                     "llm_call",
                     "llm_response",
+                    "llm_reservation",
                 ]
             ),
         )
@@ -235,15 +236,44 @@ def compute_budget_usage(session: Session, research_run_id: str) -> BudgetUsage:
 
     for ev in events:
         payload = ev.payload_json or {}
-        if payload.get("is_llm_call") or payload.get("llm_call") or ev.event_type == "llm_call":
-            llm_calls_count += 1
-        for key in ("cost", "llm_cost", "cost_usd", "spend", "token_cost"):
-            if key in payload:
+        is_completed_call = bool(
+            payload.get("is_llm_call") or payload.get("llm_call") or ev.event_type == "llm_call"
+        )
+        is_active_reservation = bool(
+            payload.get("is_llm_reservation") and payload.get("reservation_status") == "active"
+        )
+
+        if is_active_reservation:
+            reserved_at_str = payload.get("reserved_at")
+            if reserved_at_str:
                 try:
-                    token_cost += float(payload[key])
-                    break
+                    res_time = datetime.fromisoformat(reserved_at_str)
+                    if res_time.tzinfo is None:
+                        res_time = res_time.replace(tzinfo=UTC)
+                    if (now - res_time).total_seconds() > 300:
+                        is_active_reservation = False
                 except (ValueError, TypeError):
                     pass
+
+        if is_completed_call or is_active_reservation:
+            llm_calls_count += 1
+
+        if is_completed_call:
+            for key in ("cost", "llm_cost", "cost_usd", "spend", "token_cost"):
+                if key in payload:
+                    try:
+                        token_cost += float(payload[key])
+                        break
+                    except (ValueError, TypeError):
+                        pass
+        elif is_active_reservation:
+            for key in ("estimated_cost", "cost", "llm_cost"):
+                if key in payload:
+                    try:
+                        token_cost += float(payload[key])
+                        break
+                    except (ValueError, TypeError):
+                        pass
 
     return BudgetUsage(
         experiments_count=experiments_count,

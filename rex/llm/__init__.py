@@ -1,6 +1,13 @@
 """REX LLM Abstraction and Structured Generation Package (REX-012)."""
 
-from rex.llm.accounting import check_llm_budget, record_llm_usage_event
+from rex.llm.accounting import (
+    LLMReservation,
+    check_llm_budget,
+    finalize_llm_slot,
+    record_llm_usage_event,
+    release_llm_slot,
+    reserve_llm_slot,
+)
 from rex.llm.base import LLMProvider, execute_with_retry
 from rex.llm.models import (
     LLMConfigurationError,
@@ -31,6 +38,7 @@ __all__ = [
     "LLMProvider",
     "LLMProviderError",
     "LLMRequest",
+    "LLMReservation",
     "LLMResponse",
     "LLMSchemaValidationError",
     "LLMTimeoutError",
@@ -41,6 +49,9 @@ __all__ = [
     "check_llm_budget",
     "execute_with_retry",
     "extract_json_candidate",
+    "finalize_llm_slot",
     "get_llm_provider",
     "record_llm_usage_event",
+    "release_llm_slot",
+    "reserve_llm_slot",
 ]

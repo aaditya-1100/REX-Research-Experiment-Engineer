@@ -10,7 +10,9 @@ import re
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.orm import Session
 
+from rex.llm.accounting import finalize_llm_slot, reserve_llm_slot
 from rex.llm.base import LLMProvider
 from rex.llm.models import (
     LLMMalformedResponseError,
@@ -18,6 +20,7 @@ from rex.llm.models import (
     LLMResponse,
     LLMSchemaValidationError,
 )
+from rex.observability.events import ActorType, EventSink
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +74,14 @@ class StructuredGenerator:
         request: LLMRequest,
         response_model: type[T],
         max_repair_attempts: int = 1,
+        session: Session | None = None,
+        actor: ActorType = ActorType.RESEARCH_AGENT,
+        event_sink: EventSink | None = None,
     ) -> tuple[T, LLMResponse]:
         """Generate, extract, validate, and return a Pydantic domain object.
 
         Fails deterministically on malformed output or schema violations.
+        Atomically reserves and finalizes budget slots when session and research_run_id are provided.
         """
         # Inject schema instruction if not already present in prompt
         schema_json = json.dumps(response_model.model_json_schema(), indent=2)
@@ -91,14 +98,48 @@ class StructuredGenerator:
             }
         )
 
-        response = self.provider.generate(effective_request)
+        # 1. Initial generation with atomic slot reservation
+        reservation = None
+        if session is not None and effective_request.research_run_id is not None:
+            reservation = reserve_llm_slot(
+                session=session,
+                research_run_id=effective_request.research_run_id,
+                agent_name=effective_request.agent_name or "unknown",
+                action_name=effective_request.action_name or "generate",
+                estimated_cost=effective_request.estimated_cost,
+                actor=actor,
+                event_sink=event_sink,
+            )
+
+        try:
+            response = self.provider.generate(effective_request)
+        except Exception as exc:
+            if session is not None and reservation is not None:
+                finalize_llm_slot(
+                    session=session,
+                    reservation=reservation,
+                    error=exc,
+                    actor=actor,
+                    event_sink=event_sink,
+                )
+            raise
+        else:
+            if session is not None and reservation is not None:
+                finalize_llm_slot(
+                    session=session,
+                    reservation=reservation,
+                    response=response,
+                    actor=actor,
+                    event_sink=event_sink,
+                )
+
         parsed_obj, errors = self._try_parse_and_validate(response.text, response_model)
 
         if parsed_obj is not None:
             updated_response = response.model_copy(update={"parsed": parsed_obj})
             return parsed_obj, updated_response
 
-        # Bounded structured correction attempt
+        # 2. Bounded structured correction attempt with separate budget reservation
         if max_repair_attempts > 0:
             logger.warning(
                 "Structured validation failed for %s. Attempting 1 bounded correction prompt. Errors: %s",
@@ -117,7 +158,41 @@ class StructuredGenerator:
             repair_request = effective_request.model_copy(
                 update={"user_prompt": repair_prompt, "action_name": "structured_repair"}
             )
-            repair_response = self.provider.generate(repair_request)
+
+            repair_reservation = None
+            if session is not None and repair_request.research_run_id is not None:
+                repair_reservation = reserve_llm_slot(
+                    session=session,
+                    research_run_id=repair_request.research_run_id,
+                    agent_name=repair_request.agent_name or "unknown",
+                    action_name="structured_repair",
+                    estimated_cost=repair_request.estimated_cost,
+                    actor=actor,
+                    event_sink=event_sink,
+                )
+
+            try:
+                repair_response = self.provider.generate(repair_request)
+            except Exception as exc:
+                if session is not None and repair_reservation is not None:
+                    finalize_llm_slot(
+                        session=session,
+                        reservation=repair_reservation,
+                        error=exc,
+                        actor=actor,
+                        event_sink=event_sink,
+                    )
+                raise
+            else:
+                if session is not None and repair_reservation is not None:
+                    finalize_llm_slot(
+                        session=session,
+                        reservation=repair_reservation,
+                        response=repair_response,
+                        actor=actor,
+                        event_sink=event_sink,
+                    )
+
             repaired_obj, repair_errors = self._try_parse_and_validate(
                 repair_response.text, response_model
             )
