@@ -1251,3 +1251,193 @@ class Artifact(BaseModel):
             metadata_json=unfreeze_value(self.metadata),
             created_at=self.created_at,
         )
+
+
+class ResearchContext(BaseModel):
+    """Immutable domain representation of structured problem context produced by the Investigator."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    research_run_id: str = Field(description="ID of associated research run")
+    problem_definition: str = Field(
+        description="Concise, rigorous formulation of the scientific problem"
+    )
+    task_domain: str = Field(
+        default="machine_learning", description="Scientific or computational domain"
+    )
+    relevant_terminology: tuple[str, ...] = Field(
+        default_factory=tuple, description="Key domain concepts and terms"
+    )
+    methodological_approaches: tuple[str, ...] = Field(
+        default_factory=tuple, description="Established candidate methods"
+    )
+    likely_baselines: tuple[str, ...] = Field(
+        default_factory=tuple, description="Standard comparative baselines"
+    )
+    measurable_outcomes: tuple[str, ...] = Field(
+        default_factory=tuple, description="Quantitatively observable metrics/signals"
+    )
+    important_assumptions: tuple[str, ...] = Field(
+        default_factory=tuple, description="Explicit foundational assumptions"
+    )
+    unresolved_questions: tuple[str, ...] = Field(
+        default_factory=tuple, description="Open empirical or theoretical questions"
+    )
+    experiment_considerations: tuple[str, ...] = Field(
+        default_factory=tuple, description="Design constraints, compute, or safety notes"
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="UTC creation timestamp"
+    )
+
+    @field_validator("research_run_id", "problem_definition")
+    @classmethod
+    def _validate_non_empty(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Field must be a non-empty string.")
+        return cleaned
+
+    @field_validator(
+        "relevant_terminology",
+        "methodological_approaches",
+        "likely_baselines",
+        "measurable_outcomes",
+        "important_assumptions",
+        "unresolved_questions",
+        "experiment_considerations",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_tuple(cls, v: Any) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, str):
+            return (v.strip(),) if v.strip() else ()
+        if isinstance(v, (list, tuple, set)):
+            return tuple(str(x).strip() for x in v if str(x).strip())
+        return ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "research_run_id": self.research_run_id,
+            "problem_definition": self.problem_definition,
+            "task_domain": self.task_domain,
+            "relevant_terminology": list(self.relevant_terminology),
+            "methodological_approaches": list(self.methodological_approaches),
+            "likely_baselines": list(self.likely_baselines),
+            "measurable_outcomes": list(self.measurable_outcomes),
+            "important_assumptions": list(self.important_assumptions),
+            "unresolved_questions": list(self.unresolved_questions),
+            "experiment_considerations": list(self.experiment_considerations),
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ResearchContext":
+        return cls(
+            research_run_id=str(data.get("research_run_id", "")),
+            problem_definition=str(data.get("problem_definition", "")),
+            task_domain=str(data.get("task_domain", "machine_learning")),
+            relevant_terminology=data.get("relevant_terminology", ()),
+            methodological_approaches=data.get("methodological_approaches", ()),
+            likely_baselines=data.get("likely_baselines", ()),
+            measurable_outcomes=data.get("measurable_outcomes", ()),
+            important_assumptions=data.get("important_assumptions", ()),
+            unresolved_questions=data.get("unresolved_questions", ()),
+            experiment_considerations=data.get("experiment_considerations", ()),
+        )
+
+
+class GeneratedExperiment(BaseModel):
+    """Structured code-generation artifact produced by the Coding Agent for the Execution Plane."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_enum_values=False,
+        arbitrary_types_allowed=True,
+    )
+
+    experiment_id: str = Field(description="Parent experiment specification ID")
+    research_run_id: str = Field(description="Parent research run ID")
+    entrypoint: str = Field(
+        default="main.py", description="Relative entrypoint file inside workspace src/"
+    )
+    source_files: Mapping[str, str] = Field(description="Relative safe file paths to code contents")
+    command: tuple[str, ...] = Field(
+        default=("python", "src/main.py"), description="Execution command argv"
+    )
+    dependencies: tuple[str, ...] = Field(
+        default_factory=tuple, description="Python package dependencies"
+    )
+    configuration: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Runtime configuration dictionary",
+    )
+    expected_metrics: tuple[str, ...] = Field(
+        default_factory=tuple, description="Metric names expected in execution output"
+    )
+    content_hash: str = Field(
+        description="Deterministic SHA256 hash of canonical source code and configuration"
+    )
+    metadata: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Provenance and generator metadata",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="UTC creation timestamp"
+    )
+
+    @field_validator("experiment_id", "research_run_id", "entrypoint")
+    @classmethod
+    def _validate_non_empty_ids(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Field must be a non-empty string.")
+        return cleaned
+
+    @field_validator("source_files", mode="after")
+    @classmethod
+    def _freeze_source_files(cls, v: Any) -> Mapping[str, str]:
+        if not v or not isinstance(v, (dict, Mapping)):
+            raise ValueError(
+                "source_files must be a non-empty mapping of filenames to code strings."
+            )
+        return freeze_value(v)
+
+    @field_validator("configuration", "metadata", mode="after")
+    @classmethod
+    def _freeze_dict(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    @field_validator("command", "dependencies", "expected_metrics", mode="before")
+    @classmethod
+    def _coerce_str_tuple(cls, v: Any) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, (list, tuple, set)):
+            return tuple(str(x) for x in v)
+        return (str(v),)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "research_run_id": self.research_run_id,
+            "entrypoint": self.entrypoint,
+            "source_files": dict(self.source_files),
+            "command": list(self.command),
+            "dependencies": list(self.dependencies),
+            "configuration": unfreeze_value(self.configuration),
+            "expected_metrics": list(self.expected_metrics),
+            "content_hash": self.content_hash,
+            "metadata": unfreeze_value(self.metadata),
+            "created_at": self.created_at.isoformat(),
+        }
