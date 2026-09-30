@@ -5,6 +5,7 @@ Defines strongly typed, validated request and outcome models for isolated contai
 
 import shlex
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -161,4 +162,62 @@ class ExecutionOutcome(BaseModel):
     cleaned_up: bool = Field(
         default=False,
         description="Whether sandbox container and temporary resources were cleaned up",
+    )
+
+
+class ExecutionRecord(BaseModel):
+    """Immutable, strongly typed domain record of an executed experiment run.
+
+    Provides a comprehensive snapshot linking specification, isolated execution,
+    captured artifacts, empirical measurements, environment metadata, and telemetry.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    execution_id: str = Field(description="Unique ID of execution attempt")
+    experiment_id: str = Field(description="Parent experiment specification ID")
+    research_run_id: str = Field(description="Parent research run ID")
+    status: ExecutionStatus = Field(description="Terminal execution status outcome")
+    exit_code: int | None = Field(
+        default=None,
+        description="Process exit code reported by container",
+    )
+    stdout: str = Field(default="", description="Captured standard output text")
+    stderr: str = Field(default="", description="Captured standard error text")
+    duration_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Wall-clock execution duration in seconds",
+    )
+    artifacts: list[OutputArtifactMetadata] = Field(
+        default_factory=list,
+        description="Metadata of files captured from container output/metadata directories",
+    )
+    results: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Empirical machine-measured metric results",
+    )
+    environment_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Deterministic environment, platform, and dependency metadata",
+    )
+    resource_usage: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Measured runtime and resource consumption telemetry",
+    )
+    failure_reason: str | None = Field(
+        default=None,
+        description="High-level description of failure if execution did not complete successfully",
+    )
+    cleaned_up: bool = Field(
+        default=False,
+        description="Whether sandbox container and temporary resources were cleaned up",
+    )
+    started_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when execution started",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when execution terminated",
     )

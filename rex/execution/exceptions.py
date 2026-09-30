@@ -50,3 +50,11 @@ class ExecutionCancelledError(ExecutionError):
 
 class ResourceLimitExceededError(ExecutionError):
     """Raised when a container execution exceeds memory, CPU, or output limits."""
+
+
+class WorkspaceError(ExecutionError):
+    """Base exception for filesystem workspace operations."""
+
+
+class WorkspaceExistsError(WorkspaceError):
+    """Raised when attempting to create a workspace that already exists."""

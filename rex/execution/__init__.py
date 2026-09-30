@@ -11,9 +11,11 @@ from rex.execution.docker_runner import (
     is_docker_available,
 )
 from rex.execution.environment import (
+    EnvironmentMetadata,
     capture_safe_environment_metadata,
     is_sensitive_key,
     sanitize_environment,
+    save_environment_metadata_artifact,
 )
 from rex.execution.exceptions import (
     CommandValidationError,
@@ -27,9 +29,12 @@ from rex.execution.exceptions import (
     SecretLeakageError,
     SecurityViolationError,
     SymlinkEscapeError,
+    WorkspaceError,
+    WorkspaceExistsError,
 )
 from rex.execution.models import (
     ExecutionOutcome,
+    ExecutionRecord,
     ExecutionRequest,
     OutputArtifactMetadata,
 )
@@ -37,6 +42,9 @@ from rex.execution.resources import ResourceLimits
 from rex.execution.runner import (
     execute_managed_sandbox_run,
     run_execution_in_sandbox,
+)
+from rex.execution.worker import (
+    DockerExecutionWorker,
 )
 from rex.execution.workspace import (
     Workspace,
@@ -48,11 +56,14 @@ __all__ = [
     "DEFAULT_APPROVED_IMAGES",
     "CommandValidationError",
     "DockerExecutionBackend",
+    "DockerExecutionWorker",
     "DockerUnavailableError",
+    "EnvironmentMetadata",
     "ExecutionBackend",
     "ExecutionCancelledError",
     "ExecutionError",
     "ExecutionOutcome",
+    "ExecutionRecord",
     "ExecutionRequest",
     "ExecutionTimeoutError",
     "ImagePolicyError",
@@ -64,6 +75,8 @@ __all__ = [
     "SecurityViolationError",
     "SymlinkEscapeError",
     "Workspace",
+    "WorkspaceError",
+    "WorkspaceExistsError",
     "WorkspaceManager",
     "capture_safe_environment_metadata",
     "execute_managed_sandbox_run",
@@ -71,5 +84,6 @@ __all__ = [
     "is_sensitive_key",
     "run_execution_in_sandbox",
     "sanitize_environment",
+    "save_environment_metadata_artifact",
     "validate_safe_relative_path",
 ]

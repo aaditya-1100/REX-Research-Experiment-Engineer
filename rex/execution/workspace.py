@@ -11,7 +11,7 @@ from pathlib import Path
 
 from rex.config import get_settings
 from rex.domain.models import ArtifactType
-from rex.execution.exceptions import PathTraversalError, SymlinkEscapeError
+from rex.execution.exceptions import PathTraversalError, SymlinkEscapeError, WorkspaceExistsError
 from rex.execution.models import ExecutionRequest, OutputArtifactMetadata
 
 
@@ -66,6 +66,72 @@ class Workspace:
     output_dir: Path
     research_run_id: str
     execution_id: str
+    input_dir: Path | None = None
+    logs_dir: Path | None = None
+    metadata_dir: Path | None = None
+    artifacts_dir: Path | None = None
+    experiment_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.input_dir is None:
+            object.__setattr__(self, "input_dir", self.workspace_dir / "input")
+        if self.logs_dir is None:
+            object.__setattr__(self, "logs_dir", self.workspace_dir / "logs")
+        if self.metadata_dir is None:
+            object.__setattr__(self, "metadata_dir", self.workspace_dir / "metadata")
+        if self.artifacts_dir is None:
+            object.__setattr__(self, "artifacts_dir", self.workspace_dir / "artifacts")
+
+    def write_src_file(self, relative_path: str | Path, content: str | bytes) -> Path:
+        """Write a source code file into the workspace src directory."""
+        target = validate_safe_relative_path(relative_path, self.src_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            target.write_text(content, encoding="utf-8")
+        else:
+            target.write_bytes(content)
+        return target
+
+    def write_input_file(self, relative_path: str | Path, content: str | bytes) -> Path:
+        """Write an input data/reference file into the workspace input directory."""
+        target = validate_safe_relative_path(relative_path, self.input_dir)  # type: ignore[arg-type]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            target.write_text(content, encoding="utf-8")
+        else:
+            target.write_bytes(content)
+        return target
+
+    def write_log_file(self, filename: str, content: str | bytes) -> Path:
+        """Write a log file into the workspace logs directory."""
+        target = validate_safe_relative_path(filename, self.logs_dir)  # type: ignore[arg-type]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            target.write_text(content, encoding="utf-8")
+        else:
+            target.write_bytes(content)
+        return target
+
+    def write_metadata_file(self, filename: str, content: str | bytes) -> Path:
+        """Write an execution metadata file into the workspace metadata directory."""
+        target = validate_safe_relative_path(filename, self.metadata_dir)  # type: ignore[arg-type]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            target.write_text(content, encoding="utf-8")
+        else:
+            target.write_bytes(content)
+        return target
+
+    def read_output_file(self, relative_path: str | Path) -> bytes:
+        """Read bytes of an output file from the workspace output directory."""
+        target = validate_safe_relative_path(relative_path, self.output_dir)
+        return target.read_bytes()
+
+    def list_output_files(self) -> list[Path]:
+        """List all regular files currently in the workspace output directory."""
+        if not self.output_dir.exists():
+            return []
+        return [p for p in sorted(self.output_dir.rglob("*")) if p.is_file()]
 
 
 class WorkspaceManager:
@@ -78,17 +144,30 @@ class WorkspaceManager:
             settings = get_settings()
             self.base_root = (settings.persistence.artifact_root / "workspaces").resolve()
 
-    def prepare_workspace(self, request: ExecutionRequest) -> Workspace:
+    def prepare_workspace(
+        self,
+        request: ExecutionRequest,
+        raise_if_exists: bool = False,
+    ) -> Workspace:
         """Create isolated directory structure and populate experiment code files."""
         # Sanitize identifiers
         run_part = validate_safe_relative_path(request.research_run_id, self.base_root)
         exec_dir = validate_safe_relative_path(request.execution_id, run_part)
 
-        src_dir = exec_dir / "src"
-        output_dir = exec_dir / "output"
+        if raise_if_exists and exec_dir.exists():
+            raise WorkspaceExistsError(
+                f"Workspace already exists for execution '{request.execution_id}' at '{exec_dir}'."
+            )
 
-        src_dir.mkdir(parents=True, exist_ok=True)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        src_dir = exec_dir / "src"
+        input_dir = exec_dir / "input"
+        output_dir = exec_dir / "output"
+        logs_dir = exec_dir / "logs"
+        metadata_dir = exec_dir / "metadata"
+        artifacts_dir = exec_dir / "artifacts"
+
+        for d in (src_dir, input_dir, output_dir, logs_dir, metadata_dir, artifacts_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
         # Write code files with strict traversal protection
         for rel_file_path, content in request.code_files.items():
@@ -100,8 +179,13 @@ class WorkspaceManager:
             workspace_dir=exec_dir,
             src_dir=src_dir,
             output_dir=output_dir,
+            input_dir=input_dir,
+            logs_dir=logs_dir,
+            metadata_dir=metadata_dir,
+            artifacts_dir=artifacts_dir,
             research_run_id=request.research_run_id,
             execution_id=request.execution_id,
+            experiment_id=request.experiment_id,
         )
 
     def collect_output_artifacts(
@@ -157,10 +241,23 @@ class WorkspaceManager:
 
         return collected
 
-    def cleanup_workspace(self, workspace: Workspace) -> None:
-        """Safely delete temporary workspace directory and all contained files."""
-        if workspace.workspace_dir.exists():
+    def cleanup_workspace(self, workspace: Workspace, retain_evidence: bool = True) -> None:
+        """Clean workspace directory.
+
+        If retain_evidence is True, safely preserves outputs, logs, metadata, and artifacts,
+        while cleaning up temporary source code and scratch files.
+        If retain_evidence is False, removes the entire workspace directory.
+        """
+        if not workspace.workspace_dir.exists():
+            return
+
+        if not retain_evidence:
             shutil.rmtree(workspace.workspace_dir, ignore_errors=True)
+            return
+
+        # Selective cleanup: remove src directory, preserve output, logs, metadata, artifacts
+        if workspace.src_dir.exists():
+            shutil.rmtree(workspace.src_dir, ignore_errors=True)
 
     @staticmethod
     def _infer_artifact_type(filename: str) -> ArtifactType:
