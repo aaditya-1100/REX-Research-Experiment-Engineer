@@ -79,6 +79,98 @@ class PromptInjectionAttemptError(LiteratureSecurityError):
         self.snippet = snippet
 
 
+import re
+from urllib.parse import urlparse
+
+MAX_RETRY_AFTER_SECONDS: float = 60.0
+MAX_RESPONSE_BYTES: int = 10 * 1024 * 1024  # 10 MB
+
+FORBIDDEN_HOST_PATTERNS = [
+    re.compile(r"^127\.", re.IGNORECASE),
+    re.compile(r"^localhost$", re.IGNORECASE),
+    re.compile(r"^0\.0\.0\.0$", re.IGNORECASE),
+    re.compile(r"^169\.254\.", re.IGNORECASE),
+    re.compile(r"^10\.", re.IGNORECASE),
+    re.compile(r"^172\.(1[6-9]|2[0-9]|3[0-1])\.", re.IGNORECASE),
+    re.compile(r"^192\.168\.", re.IGNORECASE),
+    re.compile(r"^::1$", re.IGNORECASE),
+]
+
+FORBIDDEN_SCHEMES = frozenset({"file", "ftp", "data", "javascript", "vbscript"})
+
+
+def validate_safe_url(url: str, allowed_base_url: str) -> None:
+    """Validate that an outbound literature URL targets the configured provider endpoint safely.
+
+    Raises:
+        LiteratureSecurityError: If destination uses a forbidden scheme, loopback/private IP,
+            or attempts to escape the configured provider host.
+    """
+    parsed = urlparse(url)
+    allowed_parsed = urlparse(allowed_base_url)
+
+    if parsed.scheme.lower() in FORBIDDEN_SCHEMES:
+        raise LiteratureSecurityError(
+            f"Forbidden URL scheme '{parsed.scheme}' in literature request: '{url}'"
+        )
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise LiteratureSecurityError(
+            f"Unsupported URL scheme '{parsed.scheme}': must be http or https."
+        )
+
+    # Check host matching and forbidden destinations
+    dest_host = (parsed.hostname or "").lower()
+    allowed_host = (allowed_parsed.hostname or "").lower()
+
+    # Check loopback / private IP first
+    for pat in FORBIDDEN_HOST_PATTERNS:
+        if pat.search(dest_host):
+            raise LiteratureSecurityError(
+                f"Literature requests to loopback, link-local, or private IP '{dest_host}' are strictly forbidden."
+            )
+
+    if not dest_host or dest_host != allowed_host:
+        raise LiteratureSecurityError(
+            f"URL destination host '{dest_host}' does not match allowed provider host '{allowed_host}'."
+        )
+
+    # Check path traversal
+    if ".." in parsed.path:
+        raise LiteratureSecurityError(
+            f"Path traversal sequence '..' detected in literature URL: '{parsed.path}'"
+        )
+
+
+def sanitize_secret_values(text: str, secrets: list[Any] | None = None) -> str:
+    """Mask known secret strings and common bearer/token patterns in error text."""
+    if not text:
+        return ""
+    sanitized = text
+    if secrets:
+        for s in secrets:
+            if s is None:
+                continue
+            val = s.get_secret_value() if hasattr(s, "get_secret_value") else str(s)
+            if val and len(val) >= 4 and val in sanitized:
+                sanitized = sanitized.replace(val, "********")
+
+    # Regex mask Authorization and token headers/patterns
+    sanitized = re.sub(
+        r"(Bearer\s+)[A-Za-z0-9_\-\.]{8,}",
+        r"\1********",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"((?:api[_-]?key|token|auth[_-]?token)[=:\s]+)[A-Za-z0-9_\-\.]{8,}",
+        r"\1********",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    return sanitized
+
+
 def mask_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
     """Return a copy of request/response headers with authentication secrets masked."""
     sanitized: dict[str, str] = {}
@@ -153,6 +245,10 @@ class LiteratureProvider(ABC):
 
 
 __all__ = [
+    "FORBIDDEN_HOST_PATTERNS",
+    "FORBIDDEN_SCHEMES",
+    "MAX_RESPONSE_BYTES",
+    "MAX_RETRY_AFTER_SECONDS",
     "InvalidQueryError",
     "LiteratureError",
     "LiteratureProvider",
@@ -164,4 +260,6 @@ __all__ = [
     "ProviderUnavailableError",
     "RateLimitError",
     "mask_sensitive_headers",
+    "sanitize_secret_values",
+    "validate_safe_url",
 ]

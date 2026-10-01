@@ -11,6 +11,9 @@ import httpx
 
 from rex.config.settings import LiteratureSettings
 from rex.literature.base import (
+    MAX_RESPONSE_BYTES,
+    MAX_RETRY_AFTER_SECONDS,
+    InvalidQueryError,
     LiteratureProvider,
     LiteratureProviderError,
     LiteratureTimeoutError,
@@ -18,6 +21,8 @@ from rex.literature.base import (
     ProviderUnavailableError,
     RateLimitError,
     mask_sensitive_headers,
+    sanitize_secret_values,
+    validate_safe_url,
 )
 from rex.literature.models import (
     LiteratureSearchRequest,
@@ -45,7 +50,9 @@ class SemanticScholarProvider(LiteratureProvider):
         self.settings = settings or LiteratureSettings()
         self.base_url = self.settings.semantic_scholar_base_url.rstrip("/")
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=float(self.settings.request_timeout_seconds))
+        self._client = client or httpx.Client(
+            timeout=float(self.settings.request_timeout_seconds), follow_redirects=False
+        )
 
     @property
     def provider_name(self) -> str:
@@ -73,7 +80,8 @@ class SemanticScholarProvider(LiteratureProvider):
         return headers
 
     def _execute_request(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Execute HTTP request with strict error handling and secret sanitization."""
+        """Execute HTTP request with strict error handling, SSRF defense, and secret sanitization."""
+        validate_safe_url(url, self.base_url)
         headers = self._get_headers()
         try:
             response = self._client.get(url, params=params, headers=headers)
@@ -93,6 +101,20 @@ class SemanticScholarProvider(LiteratureProvider):
                 provider=self.provider_name,
             ) from exc
 
+        if response.status_code in (301, 302, 303, 307, 308):
+            loc = response.headers.get("Location", "")
+            raise LiteratureProviderError(
+                f"HTTP redirect ({response.status_code}) to '{loc}' is not permitted.",
+                provider=self.provider_name,
+                status_code=response.status_code,
+            )
+
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise MalformedResponseError(
+                f"Semantic Scholar response exceeded size limit of {MAX_RESPONSE_BYTES} bytes.",
+                provider=self.provider_name,
+            )
+
         if response.status_code == 429:
             retry_after_hdr = response.headers.get("Retry-After")
             retry_after: float | None = None
@@ -101,6 +123,15 @@ class SemanticScholarProvider(LiteratureProvider):
                     retry_after = float(retry_after_hdr)
                 except ValueError:
                     retry_after = None
+            if retry_after is not None:
+                if retry_after > MAX_RETRY_AFTER_SECONDS:
+                    raise RateLimitError(
+                        f"Semantic Scholar rate limit retry-after ({retry_after}s) exceeds allowable limit of {MAX_RETRY_AFTER_SECONDS}s.",
+                        provider=self.provider_name,
+                        retry_after=retry_after,
+                    )
+                retry_after = max(retry_after, 0.0)
+
             raise RateLimitError(
                 "Semantic Scholar rate limit exceeded (HTTP 429).",
                 provider=self.provider_name,
@@ -118,8 +149,11 @@ class SemanticScholarProvider(LiteratureProvider):
             return {}
 
         if response.status_code >= 400:
+            err_snippet = sanitize_secret_values(
+                response.text[:200], [self.settings.semantic_scholar_api_key]
+            )
             raise LiteratureProviderError(
-                f"Semantic Scholar error (HTTP {response.status_code}): {response.text[:200]}",
+                f"Semantic Scholar error (HTTP {response.status_code}): {err_snippet}",
                 provider=self.provider_name,
                 status_code=response.status_code,
                 details={"headers": mask_sensitive_headers(dict(response.headers))},
@@ -250,6 +284,10 @@ class SemanticScholarProvider(LiteratureProvider):
     def get_by_id(self, external_id: str, research_run_id: str = "") -> LiteratureSource | None:
         """Fetch a single paper by PaperId, DOI, CorpusId, or arXiv ID."""
         clean_id = external_id.strip()
+        if "://" in clean_id or ".." in clean_id or clean_id.startswith("/") or "\\" in clean_id:
+            raise InvalidQueryError(
+                f"Malformed or unsafe Semantic Scholar external ID: '{clean_id}'"
+            )
         url = f"{self.base_url}/paper/{clean_id}"
         data = self._execute_request(url, params={"fields": SEMANTIC_SCHOLAR_FIELDS})
         if not data:

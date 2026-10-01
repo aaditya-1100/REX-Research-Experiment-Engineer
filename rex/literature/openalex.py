@@ -13,6 +13,9 @@ import httpx
 
 from rex.config.settings import LiteratureSettings
 from rex.literature.base import (
+    MAX_RESPONSE_BYTES,
+    MAX_RETRY_AFTER_SECONDS,
+    InvalidQueryError,
     LiteratureProvider,
     LiteratureProviderError,
     LiteratureTimeoutError,
@@ -20,6 +23,8 @@ from rex.literature.base import (
     ProviderUnavailableError,
     RateLimitError,
     mask_sensitive_headers,
+    sanitize_secret_values,
+    validate_safe_url,
 )
 from rex.literature.models import (
     LiteratureSearchRequest,
@@ -47,8 +52,8 @@ def reconstruct_openalex_abstract(
         if not isinstance(indices, list):
             continue
         for pos in indices:
-            if isinstance(pos, int) and pos >= 0:
-                positions[pos] = word
+            if isinstance(pos, int) and 0 <= pos <= 100000:
+                positions[pos] = str(word)
 
     if not positions:
         return ""
@@ -63,7 +68,12 @@ def extract_openalex_id(raw_id: str) -> str:
     """Normalize full OpenAlex URI (e.g. 'https://openalex.org/W2741809807') to canonical ID."""
     clean = raw_id.strip()
     if clean.startswith("https://openalex.org/"):
-        return clean.replace("https://openalex.org/", "")
+        clean = clean.replace("https://openalex.org/", "")
+    elif clean.startswith("http://openalex.org/"):
+        clean = clean.replace("http://openalex.org/", "")
+
+    if "://" in clean or ".." in clean or clean.startswith("/") or "\\" in clean:
+        raise InvalidQueryError(f"Malformed or unsafe OpenAlex external ID: '{clean}'")
     return clean
 
 
@@ -78,7 +88,9 @@ class OpenAlexProvider(LiteratureProvider):
         self.settings = settings or LiteratureSettings()
         self.base_url = self.settings.openalex_base_url.rstrip("/")
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=float(self.settings.request_timeout_seconds))
+        self._client = client or httpx.Client(
+            timeout=float(self.settings.request_timeout_seconds), follow_redirects=False
+        )
 
     @property
     def provider_name(self) -> str:
@@ -109,6 +121,7 @@ class OpenAlexProvider(LiteratureProvider):
 
     def _execute_request(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute HTTP request with safe error translation and secret masking."""
+        validate_safe_url(url, self.base_url)
         headers = self._get_headers()
         try:
             response = self._client.get(url, params=params, headers=headers)
@@ -128,6 +141,20 @@ class OpenAlexProvider(LiteratureProvider):
                 provider=self.provider_name,
             ) from exc
 
+        if response.status_code in (301, 302, 303, 307, 308):
+            loc = response.headers.get("Location", "")
+            raise LiteratureProviderError(
+                f"HTTP redirect ({response.status_code}) to '{loc}' is not permitted.",
+                provider=self.provider_name,
+                status_code=response.status_code,
+            )
+
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise MalformedResponseError(
+                f"OpenAlex response exceeded size limit of {MAX_RESPONSE_BYTES} bytes.",
+                provider=self.provider_name,
+            )
+
         if response.status_code == 429:
             retry_after_hdr = response.headers.get("Retry-After")
             retry_after: float | None = None
@@ -136,6 +163,15 @@ class OpenAlexProvider(LiteratureProvider):
                     retry_after = float(retry_after_hdr)
                 except ValueError:
                     retry_after = None
+            if retry_after is not None:
+                if retry_after > MAX_RETRY_AFTER_SECONDS:
+                    raise RateLimitError(
+                        f"OpenAlex rate limit retry-after ({retry_after}s) exceeds allowable limit of {MAX_RETRY_AFTER_SECONDS}s.",
+                        provider=self.provider_name,
+                        retry_after=retry_after,
+                    )
+                retry_after = max(retry_after, 0.0)
+
             raise RateLimitError(
                 "OpenAlex rate limit exceeded (HTTP 429).",
                 provider=self.provider_name,
@@ -153,8 +189,11 @@ class OpenAlexProvider(LiteratureProvider):
             return {}
 
         if response.status_code >= 400:
+            err_snippet = sanitize_secret_values(
+                response.text[:200], [self.settings.openalex_api_key]
+            )
             raise LiteratureProviderError(
-                f"OpenAlex client error (HTTP {response.status_code}): {response.text[:200]}",
+                f"OpenAlex client error (HTTP {response.status_code}): {err_snippet}",
                 provider=self.provider_name,
                 status_code=response.status_code,
                 details={"headers": mask_sensitive_headers(dict(response.headers))},

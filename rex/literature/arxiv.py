@@ -13,12 +13,16 @@ import httpx
 
 from rex.config.settings import LiteratureSettings
 from rex.literature.base import (
+    MAX_RESPONSE_BYTES,
+    InvalidQueryError,
     LiteratureProvider,
     LiteratureProviderError,
     LiteratureTimeoutError,
     MalformedResponseError,
     ProviderUnavailableError,
     RateLimitError,
+    sanitize_secret_values,
+    validate_safe_url,
 )
 from rex.literature.models import (
     LiteratureSearchRequest,
@@ -40,6 +44,8 @@ def extract_canonical_arxiv_id(raw_id: str) -> str:
     # Strip URL prefixes
     clean = re.sub(r"^https?://arxiv\.org/abs/", "", clean)
     clean = re.sub(r"^arxiv:", "", clean, flags=re.IGNORECASE)
+    if "://" in clean or ".." in clean or clean.startswith("/") or "\\" in clean:
+        raise InvalidQueryError(f"Malformed or unsafe arXiv external ID: '{clean}'")
     return clean
 
 
@@ -54,7 +60,9 @@ class ArXivProvider(LiteratureProvider):
         self.settings = settings or LiteratureSettings()
         self.base_url = self.settings.arxiv_base_url
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=float(self.settings.request_timeout_seconds))
+        self._client = client or httpx.Client(
+            timeout=float(self.settings.request_timeout_seconds), follow_redirects=False
+        )
 
     @property
     def provider_name(self) -> str:
@@ -74,6 +82,7 @@ class ArXivProvider(LiteratureProvider):
 
     def _execute_query(self, params: dict[str, Any]) -> str:
         """Execute HTTP GET request against arXiv query endpoint and return raw XML text."""
+        validate_safe_url(self.base_url, self.base_url)
         headers = {
             "Accept": "application/atom+xml, application/xml, text/xml",
             "User-Agent": "REX-Research/0.1.0",
@@ -96,6 +105,20 @@ class ArXivProvider(LiteratureProvider):
                 provider=self.provider_name,
             ) from exc
 
+        if response.status_code in (301, 302, 303, 307, 308):
+            loc = response.headers.get("Location", "")
+            raise LiteratureProviderError(
+                f"HTTP redirect ({response.status_code}) to '{loc}' is not permitted.",
+                provider=self.provider_name,
+                status_code=response.status_code,
+            )
+
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise MalformedResponseError(
+                f"arXiv response exceeded size limit of {MAX_RESPONSE_BYTES} bytes.",
+                provider=self.provider_name,
+            )
+
         if response.status_code == 429:
             raise RateLimitError(
                 "arXiv rate limit encountered (HTTP 429).",
@@ -110,13 +133,23 @@ class ArXivProvider(LiteratureProvider):
             )
 
         if response.status_code >= 400:
+            err_snippet = sanitize_secret_values(response.text[:200])
             raise LiteratureProviderError(
-                f"arXiv client error (HTTP {response.status_code}): {response.text[:200]}",
+                f"arXiv client error (HTTP {response.status_code}): {err_snippet}",
                 provider=self.provider_name,
                 status_code=response.status_code,
             )
 
-        return response.text
+        # XML bomb / XXE prevention: forbid DOCTYPE and ENTITY declarations
+        text_content = response.text
+        lower_xml = text_content.lower()
+        if "<!doctype" in lower_xml or "<!entity" in lower_xml:
+            raise MalformedResponseError(
+                "XML DOCTYPE and ENTITY declarations are forbidden in arXiv responses for security.",
+                provider=self.provider_name,
+            )
+
+        return text_content
 
     def _parse_entry(self, entry: ET.Element, research_run_id: str) -> LiteratureSource:
         """Safely parse an Atom <entry> element into a LiteratureSource."""
