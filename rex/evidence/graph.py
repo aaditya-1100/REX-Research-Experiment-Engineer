@@ -55,6 +55,70 @@ class InvalidRelationError(EvidenceGraphError):
     """Raised when an evidence relationship or node type is invalid."""
 
 
+VALID_RELATIONSHIPS: dict[EvidenceRelationType, set[tuple[EvidenceNodeType, EvidenceNodeType]]] = {
+    EvidenceRelationType.SUPPORTED_BY: {
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.ANALYSIS),
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.RESULT),
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.LITERATURE_SOURCE),
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.CLAIM),
+        (EvidenceNodeType.LITERATURE_SOURCE, EvidenceNodeType.CLAIM),
+        (EvidenceNodeType.ARTIFACT, EvidenceNodeType.CLAIM),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.HYPOTHESIS),
+        (EvidenceNodeType.HYPOTHESIS, EvidenceNodeType.LITERATURE_SOURCE),
+        (EvidenceNodeType.HYPOTHESIS, EvidenceNodeType.CLAIM),
+    },
+    EvidenceRelationType.DERIVED_FROM: {
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.RESULT),
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.ANALYSIS),
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.ANALYSIS),
+        (EvidenceNodeType.RESULT, EvidenceNodeType.ARTIFACT),
+    },
+    EvidenceRelationType.PRODUCED_BY: {
+        (EvidenceNodeType.RESULT, EvidenceNodeType.EXECUTION),
+        (EvidenceNodeType.ARTIFACT, EvidenceNodeType.EXECUTION),
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.EXECUTION),
+    },
+    EvidenceRelationType.INSTANCE_OF: {
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.EXPERIMENT),
+    },
+    EvidenceRelationType.USES_CODE: {
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.CODE),
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.CODE),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.ARTIFACT),
+    },
+    EvidenceRelationType.USES_DATASET: {
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.DATASET),
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.DATASET),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.ARTIFACT),
+    },
+    EvidenceRelationType.USES_CONFIGURATION: {
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.CONFIGURATION),
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.CONFIGURATION),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.ARTIFACT),
+    },
+    EvidenceRelationType.USES_ARTIFACT: {
+        (EvidenceNodeType.EXECUTION, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.ARTIFACT),
+        (EvidenceNodeType.ANALYSIS, EvidenceNodeType.ARTIFACT),
+    },
+    EvidenceRelationType.CITES: {
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.LITERATURE_SOURCE),
+        (EvidenceNodeType.HYPOTHESIS, EvidenceNodeType.LITERATURE_SOURCE),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.LITERATURE_SOURCE),
+    },
+    EvidenceRelationType.REFINES: {
+        (EvidenceNodeType.CLAIM, EvidenceNodeType.CLAIM),
+        (EvidenceNodeType.EXPERIMENT, EvidenceNodeType.EXPERIMENT),
+        (EvidenceNodeType.HYPOTHESIS, EvidenceNodeType.HYPOTHESIS),
+    },
+}
+
+
 @dataclass(frozen=True)
 class ClaimLineage:
     """Complete provenance trace from a Claim down to raw empirical foundations."""
@@ -120,12 +184,22 @@ class EvidenceGraphService:
                 run_id = entity.research_run_id
         elif n_type == EvidenceNodeType.RESULT:
             entity = self.session.get(ResultModel, node_id)
-            if entity and entity.execution and entity.execution.experiment:
-                run_id = entity.execution.experiment.research_run_id
+            if entity:
+                if entity.execution and entity.execution.experiment:
+                    run_id = entity.execution.experiment.research_run_id
+                else:
+                    exec_m = self.session.get(ExecutionModel, entity.execution_id)
+                    if exec_m and exec_m.experiment:
+                        run_id = exec_m.experiment.research_run_id
         elif n_type == EvidenceNodeType.EXECUTION:
             entity = self.session.get(ExecutionModel, node_id)
-            if entity and entity.experiment:
-                run_id = entity.experiment.research_run_id
+            if entity:
+                if entity.experiment:
+                    run_id = entity.experiment.research_run_id
+                else:
+                    exp_m = self.session.get(ExperimentModel, entity.experiment_id)
+                    if exp_m:
+                        run_id = exp_m.research_run_id
         elif n_type == EvidenceNodeType.EXPERIMENT:
             entity = self.session.get(ExperimentModel, node_id)
             if entity:
@@ -218,37 +292,45 @@ class EvidenceGraphService:
         norm_target_type = self._normalize_node_type(target_type)
         norm_rel = self._normalize_relation_type(relationship_type)
 
-        # 1. Resolve both nodes and verify their run scoping
-        _, source_run = self.resolve_node(norm_source_type, source_id)
-        _, target_run = self.resolve_node(norm_target_type, target_id)
-
-        # Check cross-run boundary
-        if source_run is not None and target_run is not None and source_run != target_run:
-            raise CrossRunEvidenceError(
-                f"Cross-run evidence link rejected: source '{source_id}' is in run '{source_run}', "
-                f"but target '{target_id}' is in run '{target_run}'."
-            )
-
-        eff_run_id = research_run_id or source_run or target_run
-        if (
-            research_run_id
-            and source_run
-            and research_run_id != source_run
-            or research_run_id
-            and target_run
-            and research_run_id != target_run
-        ):
-            raise CrossRunEvidenceError(
-                f"Explicit research_run_id '{research_run_id}' does not match entity run scope."
-            )
-
-        # 2. Cycle detection: adding source -> target must not form a cycle.
-        # If target can already reach source, then source -> target creates a cycle.
+        # 0. Check self-referential cycle immediately
         if source_id == target_id:
             raise EvidenceCycleError(
                 f"Self-referential evidence link not permitted on node '{source_id}'."
             )
 
+        # 1. Validate relationship semantics
+        allowed_pairs = VALID_RELATIONSHIPS.get(norm_rel, set())
+        if (norm_source_type, norm_target_type) not in allowed_pairs:
+            raise InvalidRelationError(
+                f"Invalid evidence relationship semantics: {norm_source_type.value} cannot have relation "
+                f"'{norm_rel.value}' to {norm_target_type.value}."
+            )
+
+        # 1. Resolve both nodes and verify their run scoping
+        _, source_run = self.resolve_node(norm_source_type, source_id)
+        _, target_run = self.resolve_node(norm_target_type, target_id)
+
+        # Enforce fail-closed research-run boundary
+        if source_run is None or target_run is None:
+            raise CrossRunEvidenceError(
+                f"Cannot establish evidence link: unresolved research run for source '{source_id}' "
+                f"or target '{target_id}'."
+            )
+
+        if source_run != target_run:
+            raise CrossRunEvidenceError(
+                f"Cross-run evidence link rejected: source '{source_id}' is in run '{source_run}', "
+                f"but target '{target_id}' is in run '{target_run}'."
+            )
+
+        eff_run_id = research_run_id or source_run
+        if research_run_id and research_run_id != source_run:
+            raise CrossRunEvidenceError(
+                f"Explicit research_run_id '{research_run_id}' does not match entity run scope '{source_run}'."
+            )
+
+        # 3. Directed cycle detection: adding source -> target must not form a cycle.
+        # If target can already reach source, then source -> target creates a cycle.
         if self.has_path(target_id, source_id):
             raise EvidenceCycleError(
                 f"Evidence link from '{source_id}' to '{target_id}' would create a directed cycle."
@@ -341,17 +423,30 @@ class EvidenceGraphService:
         experiments: list[ExperimentModel] = []
         artifacts: list[ArtifactModel] = []
 
-        # Inbound links supporting this claim (source -> claim)
+        # Resolve all links supporting this claim (inbound or outbound)
         claim_inbound = self.repo.list_by_target(EvidenceNodeType.CLAIM.value, claim_id)
-        for link in claim_inbound:
+        claim_outbound = self.repo.list_by_source(EvidenceNodeType.CLAIM.value, claim_id)
+
+        seen_link_ids: set[str] = set()
+        all_claim_links: list[EvidenceLinkModel] = []
+        for l in list(claim_inbound) + list(claim_outbound):
+            if l.id not in seen_link_ids:
+                seen_link_ids.add(l.id)
+                all_claim_links.append(l)
+
+        for link in all_claim_links:
             all_links.append(EvidenceLink.from_persistence(link))
 
-        if not claim_inbound:
+        if not all_claim_links:
             gaps.append(f"Claim '{claim_id}' has no supporting evidence links.")
 
-        for link in claim_inbound:
-            source_type = link.source_type
-            source_id = link.source_id
+        for link in all_claim_links:
+            if link.target_id == claim_id:
+                source_type = link.source_type
+                source_id = link.source_id
+            else:
+                source_type = link.target_type
+                source_id = link.target_id
 
             if source_type == EvidenceNodeType.ANALYSIS.value:
                 analysis = self.session.get(AnalysisModel, source_id)

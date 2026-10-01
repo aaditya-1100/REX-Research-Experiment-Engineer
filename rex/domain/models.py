@@ -147,6 +147,9 @@ class ClaimStatus(StrEnum):
     UNSUPPORTED = "unsupported"
     VERIFIED = "verified"
     REJECTED = "rejected"
+    TAMPERED = "tampered"
+    DISPROVEN = "disproven"
+    INCONCLUSIVE = "inconclusive"
 
 
 class EvidenceNodeType(StrEnum):
@@ -162,6 +165,7 @@ class EvidenceNodeType(StrEnum):
     CONFIGURATION = "configuration"
     DATASET = "dataset"
     LITERATURE_SOURCE = "literature_source"
+    HYPOTHESIS = "hypothesis"
 
 
 class EvidenceRelationType(StrEnum):

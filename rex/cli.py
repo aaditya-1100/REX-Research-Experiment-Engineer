@@ -52,7 +52,7 @@ def verify_cmd(
         typer.Option(
             "--tolerance", "-t", help="Tolerance for statistical recomputation comparisons."
         ),
-    ] = 1e-4,
+    ] = 1e-6,
     artifact_root: Annotated[
         str | None,
         typer.Option("--artifact-root", "-a", help="Root directory for relative artifact paths."),

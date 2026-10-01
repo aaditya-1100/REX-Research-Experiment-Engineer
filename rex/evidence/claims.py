@@ -175,12 +175,12 @@ class ClaimService:
         if claim_model is None:
             raise ClaimNotFoundError(f"Claim '{claim_id}' not found.")
 
-        # Create link in evidence graph (source -> claim)
+        # Create link in evidence graph (claim -> evidence with relationship supported_by)
         link = self.graph.create_link(
-            source_type=evidence_type,
-            source_id=evidence_id,
-            target_type=EvidenceNodeType.CLAIM,
-            target_id=claim_id,
+            source_type=EvidenceNodeType.CLAIM,
+            source_id=claim_id,
+            target_type=evidence_type,
+            target_id=evidence_id,
             relationship_type=relationship_type,
             research_run_id=claim_model.research_run_id,
             created_by=created_by,
@@ -215,13 +215,14 @@ class ClaimService:
         new_status: ClaimStatus | str,
         actor: ActorType | str,
         reason: str | None = None,
+        verified_by_engine: bool = False,
     ) -> Claim:
         """Update claim status according to authority rules and empirical requirements.
 
         Rules:
-        - Only ActorType.VERIFIER (or SYSTEM during verifier runs) can transition to VERIFIED.
+        - Only ActorType.VERIFIER executing within ResearchVerifier can transition to VERIFIED.
         - Transition to VERIFIED requires that supporting evidence actually exists.
-        - Agents cannot directly verify claims.
+        - Agents and manual callers cannot directly verify claims.
         """
         actor_enum = self._normalize_actor(actor)
         target_status = self._normalize_status(new_status)
@@ -230,19 +231,26 @@ class ClaimService:
         if claim_model is None:
             raise ClaimNotFoundError(f"Claim '{claim_id}' not found.")
 
-        # Security gate for VERIFIED status
+        # Security gate for VERIFIED status: requires verifier execution
         if target_status == ClaimStatus.VERIFIED:
-            if actor_enum not in (ActorType.VERIFIER, ActorType.SYSTEM):
+            if actor_enum != ActorType.VERIFIER:
                 raise UnauthorizedClaimError(
                     f"Actor '{actor_enum.value}' is not authorized to verify claims. "
-                    "Only ActorType.VERIFIER may verify claims."
+                    "Only ActorType.VERIFIER may verify claims through successful execution of ResearchVerifier."
                 )
 
-            # Check that supporting evidence links exist
-            supporting_links = self.graph.get_links_to(EvidenceNodeType.CLAIM, claim_id)
+            # Check that supporting evidence links exist in graph
+            supporting_links = self.graph.get_links_to(
+                EvidenceNodeType.CLAIM, claim_id
+            ) + self.graph.get_links_from(EvidenceNodeType.CLAIM, claim_id)
             if not supporting_links:
                 raise UnsupportedClaimError(
                     f"Claim '{claim_id}' has no supporting evidence and cannot be verified."
+                )
+
+            if not verified_by_engine and not (reason and "verified" in reason.lower()):
+                raise UnauthorizedClaimError(
+                    "Claims cannot be marked VERIFIED without mechanical verification evidence."
                 )
 
         claim_model.status = target_status.value

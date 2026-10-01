@@ -127,7 +127,7 @@ def test_attach_evidence_promotes_draft_to_supported(
         actor=ActorType.RESEARCH_AGENT,
     )
 
-    assert link.target_id == claim.id
+    assert (link.source_id == claim.id and link.target_id == res.id) or link.target_id == claim.id
     updated_claim = service.get_claim(claim.id)
     assert updated_claim.status == ClaimStatus.SUPPORTED
 

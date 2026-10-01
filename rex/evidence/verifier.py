@@ -136,7 +136,7 @@ class ResearchVerifier:
         session: Session,
         event_sink: EventSink | None = None,
         artifact_root: Path | str | None = None,
-        tolerance: float = 1e-4,
+        tolerance: float = 1e-6,
     ) -> None:
         self.session = session
         self.event_sink = event_sink if event_sink is not None else EventRepository(session)
@@ -162,14 +162,24 @@ class ResearchVerifier:
         artifacts_checked: list[HashVerificationResult] = []
         analyses_checked: list[AnalysisRecomputationResult] = []
 
-        # Step 1: Emit VERIFICATION_STARTED event
-        start_event = create_event(
-            event_type=EventType.VERIFICATION_STARTED,
-            research_run_id=research_run_id,
-            actor=actor_enum,
-            payload={"verifier": "ResearchVerifier", "started_at": started_at.isoformat()},
+        # Step 1: Emit VERIFICATION_STARTED / RUN_VERIFICATION_STARTED event
+        start_payload = {"verifier": "ResearchVerifier", "started_at": started_at.isoformat()}
+        self.event_sink.emit(
+            create_event(
+                event_type=EventType.RUN_VERIFICATION_STARTED,
+                research_run_id=research_run_id,
+                actor=actor_enum,
+                payload=start_payload,
+            )
         )
-        self.event_sink.emit(start_event)
+        self.event_sink.emit(
+            create_event(
+                event_type=EventType.VERIFICATION_STARTED,
+                research_run_id=research_run_id,
+                actor=actor_enum,
+                payload=start_payload,
+            )
+        )
 
         # Step 2: Verify research run exists
         run = self.session.get(ResearchRunModel, research_run_id)
@@ -241,20 +251,42 @@ class ResearchVerifier:
             lineage = self.graph.trace_claim_lineage(claim.id)
             emp_nodes = [r.id for r in lineage.results] + [a.id for a in lineage.analyses]
 
-            # If claim claims to be VERIFIED or SUPPORTED, lineage must be complete
             is_valid = True
-            if claim.status in (ClaimStatus.VERIFIED.value, ClaimStatus.SUPPORTED.value):
-                if not lineage.is_complete:
-                    is_valid = False
-                    msg = (
-                        f"Claim '{claim.id}' is marked '{claim.status}' but lineage is broken: "
-                        f"{'; '.join(lineage.gaps)}"
-                    )
-                    errors.append(msg)
-            elif not lineage.is_complete:
-                warnings.append(
-                    f"Draft/unsupported claim '{claim.id}' has incomplete lineage: {'; '.join(lineage.gaps)}"
+            # In a formal verification run, every claim must have intact empirical lineage
+            if not lineage.is_complete:
+                is_valid = False
+                msg = (
+                    f"UNSUPPORTED_CLAIM: Claim '{claim.id}' is marked '{claim.status}' but "
+                    f"lineage is broken or lacks supporting evidence: {'; '.join(lineage.gaps)}"
                 )
+                errors.append(msg)
+            else:
+                # Check numerical consistency between claim assertion and supporting evidence
+                num_err = self._check_claim_numerical_consistency(claim, lineage)
+                if num_err:
+                    is_valid = False
+                    errors.append(num_err)
+
+            if is_valid and lineage.is_complete:
+                claim.status = ClaimStatus.VERIFIED.value
+                self.session.flush()
+
+                # Emit CLAIM_VERIFIED event
+                claim_event = create_event(
+                    event_type=EventType.CLAIM_VERIFIED,
+                    research_run_id=research_run_id,
+                    actor=actor_enum,
+                    payload={
+                        "claim_id": claim.id,
+                        "statement": claim.statement,
+                        "empirical_nodes": emp_nodes,
+                    },
+                )
+                self.event_sink.emit(claim_event)
+            elif not is_valid:
+                if claim.status == ClaimStatus.VERIFIED.value:
+                    claim.status = ClaimStatus.TAMPERED.value
+                    self.session.flush()
 
             claims_checked.append(
                 ClaimVerificationResult(
@@ -395,7 +427,11 @@ class ResearchVerifier:
                     if exp_val is not None and rec_val is not None:
                         diff = abs(float(exp_val) - float(rec_val))
                         max_diff = max(max_diff, diff)
-                        if diff > self.tolerance:
+                        tol_bound = max(
+                            self.tolerance * max(abs(float(exp_val)), abs(float(rec_val))),
+                            self.tolerance,
+                        )
+                        if diff > tol_bound:
                             return AnalysisRecomputationResult(
                                 analysis_id=analysis.id,
                                 method=method,
@@ -427,7 +463,11 @@ class ResearchVerifier:
                         if exp_val is not None and rec_val is not None:
                             diff = abs(float(exp_val) - float(rec_val))
                             max_diff = max(max_diff, diff)
-                            if diff > self.tolerance:
+                            tol_bound = max(
+                                self.tolerance * max(abs(float(exp_val)), abs(float(rec_val))),
+                                self.tolerance,
+                            )
+                            if diff > tol_bound:
                                 return AnalysisRecomputationResult(
                                     analysis_id=analysis.id,
                                     method=method,
@@ -454,31 +494,141 @@ class ResearchVerifier:
             max_difference=max_diff,
         )
 
+    def _check_claim_numerical_consistency(
+        self,
+        claim: ClaimModel,
+        lineage: Any,
+    ) -> str | None:
+        """Check whether numerical assertions in a claim match evidence outputs within tolerance."""
+        import re
+
+        meta = dict(claim.metadata_json or {})
+        asserted_vals: list[float] = []
+
+        # 1. Structured metadata values
+        for key in ("asserted_value", "metric_value", "expected_value", "value"):
+            if key in meta and meta[key] is not None:
+                try:
+                    asserted_vals.append(float(meta[key]))
+                except (ValueError, TypeError):
+                    pass
+
+        # 2. Extract numerical values and percentages from natural language statement
+        raw_matches = re.findall(r"([+-]?\b\d+(?:\.\d+)?)\s*(%?)", claim.statement)
+        for num_str, is_pct in raw_matches:
+            try:
+                val = float(num_str)
+                asserted_vals.append(val)
+                if is_pct:
+                    asserted_vals.append(val / 100.0)
+            except (ValueError, TypeError):
+                pass
+
+        if not asserted_vals:
+            return None
+
+        # 3. Collect empirical evidence numbers from analyses and results
+        evidence_numbers: list[float] = []
+        for an in lineage.analyses:
+            out_json = dict(an.output_json or {})
+            for v in out_json.values():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    evidence_numbers.append(float(v))
+
+        for res in lineage.results:
+            if res.metric_value is not None:
+                evidence_numbers.append(float(res.metric_value))
+            res_json = dict(res.result_json or {})
+            for v in res_json.values():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    evidence_numbers.append(float(v))
+
+        if not evidence_numbers:
+            return (
+                f"CLAIM_NUMBER_MISMATCH: Claim '{claim.id}' asserts numerical values {asserted_vals}, "
+                "but supporting evidence contains no numeric outputs."
+            )
+
+        # Check if at least one candidate matches supporting evidence within tolerance
+        has_match = False
+        for a_val in asserted_vals:
+            for e_val in evidence_numbers:
+                tol_bound = max(self.tolerance * max(abs(a_val), abs(e_val)), self.tolerance)
+                if abs(a_val - e_val) <= tol_bound:
+                    has_match = True
+                    break
+            if has_match:
+                break
+
+        if not has_match:
+            return (
+                f"CLAIM_NUMBER_MISMATCH: Claim '{claim.id}' asserts numerical value {asserted_vals}, "
+                f"which does not match any supporting evidence value {evidence_numbers[:5]} "
+                f"(tolerance: {self.tolerance})."
+            )
+
+        return None
+
     def _emit_completion_event(
         self,
         report: VerificationReport,
         actor: ActorType,
     ) -> None:
-        """Emit either VERIFICATION_COMPLETED or VERIFICATION_FAILED event."""
-        event_type = (
-            EventType.VERIFICATION_COMPLETED
-            if report.is_passed or report.status == VerificationStatus.WARNING
-            else EventType.VERIFICATION_FAILED
-        )
+        """Emit either VERIFICATION_COMPLETED / RUN_VERIFIED or VERIFICATION_FAILED events."""
+        payload = {
+            "status": report.status.value,
+            "claims_count": len(report.claims_verified),
+            "artifacts_count": len(report.artifacts_verified),
+            "analyses_count": len(report.analyses_recomputed),
+            "errors_count": len(report.errors),
+            "warnings_count": len(report.warnings),
+            "errors": report.errors[:10],
+            "warnings": report.warnings[:10],
+        }
 
-        event = create_event(
-            event_type=event_type,
-            research_run_id=report.research_run_id,
-            actor=actor,
-            payload={
-                "status": report.status.value,
-                "claims_count": len(report.claims_verified),
-                "artifacts_count": len(report.artifacts_verified),
-                "analyses_count": len(report.analyses_recomputed),
-                "errors_count": len(report.errors),
-                "warnings_count": len(report.warnings),
-                "errors": report.errors[:10],
-                "warnings": report.warnings[:10],
-            },
-        )
-        self.event_sink.emit(event)
+        if report.is_passed:
+            self.event_sink.emit(
+                create_event(
+                    event_type=EventType.RUN_VERIFIED,
+                    research_run_id=report.research_run_id,
+                    actor=actor,
+                    payload={
+                        "status": report.status.value,
+                        "claims_count": len(report.claims_verified),
+                    },
+                )
+            )
+            self.event_sink.emit(
+                create_event(
+                    event_type=EventType.VERIFICATION_COMPLETED,
+                    research_run_id=report.research_run_id,
+                    actor=actor,
+                    payload=payload,
+                )
+            )
+        elif report.status == VerificationStatus.WARNING:
+            self.event_sink.emit(
+                create_event(
+                    event_type=EventType.VERIFICATION_COMPLETED,
+                    research_run_id=report.research_run_id,
+                    actor=actor,
+                    payload=payload,
+                )
+            )
+        else:
+            self.event_sink.emit(
+                create_event(
+                    event_type=EventType.RUN_VERIFICATION_FAILED,
+                    research_run_id=report.research_run_id,
+                    actor=actor,
+                    payload={"status": report.status.value, "errors": report.errors[:10]},
+                )
+            )
+            self.event_sink.emit(
+                create_event(
+                    event_type=EventType.VERIFICATION_FAILED,
+                    research_run_id=report.research_run_id,
+                    actor=actor,
+                    payload=payload,
+                )
+            )

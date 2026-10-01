@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,16 +67,39 @@ def compute_file_hash(path: Path | str, chunk_size: int = 65536) -> str:
     return hasher.hexdigest()
 
 
+def _normalize_canonical_value(val: Any) -> Any:
+    """Recursively normalize values for deterministic canonical JSON serialization."""
+    if isinstance(val, float):
+        if math.isnan(val) or math.isinf(val):
+            raise ValueError(f"Non-finite float value '{val}' is not allowed in canonical JSON.")
+        if val == 0.0:
+            return 0.0
+        return val
+    if isinstance(val, dict):
+        return {str(k): _normalize_canonical_value(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [_normalize_canonical_value(v) for v in val]
+    return val
+
+
 def canonical_json_dumps(data: Any) -> str:
     """Serialize structured data to a canonical, deterministic JSON string.
 
-    Uses sorted keys, no whitespace around separators, and explicit UTF-8 encoding.
+    Guarantees:
+    - Sorted keys at all dictionary levels.
+    - No whitespace around separators (',', ':').
+    - Explicit UTF-8 representation without ASCII escaping.
+    - Fail-closed error on non-finite floats (NaN, Infinity).
+    - Normalization of negative zero (-0.0 -> 0.0).
+    - Preservation of integer vs. float distinctions.
     """
+    normalized = _normalize_canonical_value(data)
     return json.dumps(
-        data,
+        normalized,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     )
 
 
