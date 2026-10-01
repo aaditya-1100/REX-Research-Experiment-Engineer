@@ -18,6 +18,8 @@ from rex.observability.events import freeze_value, unfreeze_value
 from rex.persistence.models import (
     ArtifactModel,
     ClaimModel,
+    CritiqueModel,
+    DecisionModel,
     EvidenceLinkModel,
     ExecutionModel,
     ExperimentModel,
@@ -1858,4 +1860,277 @@ class LiteratureSource(BaseModel):
             "retrieved_at": self.retrieved_at.isoformat(),
             "raw_metadata": unfreeze_value(self.raw_metadata),
             "content_hash": self.content_hash(),
+        }
+
+
+class CritiqueSeverity(StrEnum):
+    """Explicit severity classification for research critique findings (REX-033)."""
+
+    INFO = "info"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class CritiqueCategory(StrEnum):
+    """Categorical dimensions audited by the research critic (REX-033)."""
+
+    BASELINE = "baseline"
+    CONTROLS = "controls"
+    LEAKAGE = "leakage"
+    SAMPLE_SIZE = "sample_size"
+    SEEDS = "seeds"
+    METRICS = "metrics"
+    CONFOUNDERS = "confounders"
+    CONCLUSION_SCOPE = "conclusion_scope"
+    METHODOLOGY = "methodology"
+
+
+class EpistemicStatus(StrEnum):
+    """Epistemic evidence classification required by authoritative evidence discipline."""
+
+    OBSERVED = "observed"
+    INFERRED = "inferred"
+    PROPOSED = "proposed"
+    VERIFIED = "verified"
+    UNSUPPORTED = "unsupported"
+    CONTRADICTED = "contradicted"
+
+
+class CritiqueFinding(BaseModel):
+    """Individual methodological or evidentiary finding identified by the research critic."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    finding_id: str = Field(description="Unique finding identifier within critique")
+    category: CritiqueCategory = Field(description="Methodological category evaluated")
+    severity: CritiqueSeverity = Field(description="Severity classification of the concern")
+    description: str = Field(description="Concrete critique statement explaining the concern")
+    epistemic_status: EpistemicStatus = Field(
+        default=EpistemicStatus.OBSERVED,
+        description="Epistemic standing of the evidence supporting this finding",
+    )
+    evidence_refs: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Persisted entity IDs grounding finding",
+    )
+    recommendation: str = Field(
+        default="", description="Concrete actionable remediation recommended by critic"
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "finding_id": self.finding_id,
+            "category": self.category.value,
+            "severity": self.severity.value,
+            "description": self.description,
+            "epistemic_status": self.epistemic_status.value,
+            "evidence_refs": list(self.evidence_refs),
+            "recommendation": self.recommendation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CritiqueFinding":
+        return cls(
+            finding_id=str(data.get("finding_id", uuid.uuid4().hex[:8])),
+            category=CritiqueCategory(data.get("category", "methodology")),
+            severity=CritiqueSeverity(data.get("severity", "medium")),
+            description=str(data.get("description", "")),
+            epistemic_status=EpistemicStatus(data.get("epistemic_status", "observed")),
+            evidence_refs=tuple(data.get("evidence_refs", [])),
+            recommendation=str(data.get("recommendation", "")),
+        )
+
+
+class ResearchCritique(BaseModel):
+    """Structured methodological critique of an active research investigation (REX-033)."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=lambda: f"crt_{uuid.uuid4().hex[:12]}")
+    research_run_id: str = Field(description="Research run identifier")
+    iteration: int = Field(default=1, ge=1, description="Loop iteration index")
+    summary: str = Field(description="High-level overview of critique assessment")
+    strengths: tuple[str, ...] = Field(default_factory=tuple)
+    weaknesses: tuple[str, ...] = Field(default_factory=tuple)
+    contradictions: tuple[str, ...] = Field(default_factory=tuple)
+    unresolved_questions: tuple[str, ...] = Field(default_factory=tuple)
+    methodological_concerns: tuple[str, ...] = Field(default_factory=tuple)
+    findings: tuple[CritiqueFinding, ...] = Field(default_factory=tuple)
+    recommended_action: str = Field(
+        default="refine",
+        description="Recommended next action (refine, replicate, pivot, stop, complete)",
+    )
+    recommended_action_rationale: str = Field(
+        default="", description="Detailed rationale supporting recommendation"
+    )
+    referenced_evidence: MappingProxyType = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Resolved references to actual persisted database entities",
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_by: str = Field(default="critic")
+
+    @property
+    def has_critical_findings(self) -> bool:
+        return any(f.severity == CritiqueSeverity.CRITICAL for f in self.findings)
+
+    def to_persistence(self) -> CritiqueModel:
+        return CritiqueModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            iteration=self.iteration,
+            summary=self.summary,
+            strengths_json=list(self.strengths),
+            weaknesses_json=list(self.weaknesses),
+            contradictions_json=list(self.contradictions),
+            unresolved_questions_json=list(self.unresolved_questions),
+            methodological_concerns_json=list(self.methodological_concerns),
+            findings_json=[f.to_dict() for f in self.findings],
+            recommended_action=self.recommended_action,
+            recommended_action_rationale=self.recommended_action_rationale,
+            referenced_evidence_json=unfreeze_value(self.referenced_evidence),
+            created_at=self.created_at,
+            created_by=self.created_by,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: CritiqueModel) -> "ResearchCritique":
+        raw_findings = model.findings_json or []
+        findings = tuple(CritiqueFinding.from_dict(f) for f in raw_findings if isinstance(f, dict))
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            iteration=model.iteration,
+            summary=model.summary,
+            strengths=tuple(model.strengths_json or []),
+            weaknesses=tuple(model.weaknesses_json or []),
+            contradictions=tuple(model.contradictions_json or []),
+            unresolved_questions=tuple(model.unresolved_questions_json or []),
+            methodological_concerns=tuple(model.methodological_concerns_json or []),
+            findings=findings,
+            recommended_action=model.recommended_action,
+            recommended_action_rationale=model.recommended_action_rationale or "",
+            referenced_evidence=freeze_value(model.referenced_evidence_json or {}),
+            created_at=model.created_at,
+            created_by=model.created_by,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "research_run_id": self.research_run_id,
+            "iteration": self.iteration,
+            "summary": self.summary,
+            "strengths": list(self.strengths),
+            "weaknesses": list(self.weaknesses),
+            "contradictions": list(self.contradictions),
+            "unresolved_questions": list(self.unresolved_questions),
+            "methodological_concerns": list(self.methodological_concerns),
+            "findings": [f.to_dict() for f in self.findings],
+            "recommended_action": self.recommended_action,
+            "recommended_action_rationale": self.recommended_action_rationale,
+            "referenced_evidence": unfreeze_value(self.referenced_evidence),
+            "created_at": self.created_at.isoformat(),
+            "created_by": self.created_by,
+        }
+
+
+class DecisionType(StrEnum):
+    """Authoritative action vocabulary for research decision engine (REX-034)."""
+
+    REFINE = "refine"
+    REPLICATE = "replicate"
+    PIVOT = "pivot"
+    STOP = "stop"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class ResearchDecision(BaseModel):
+    """Structured, deterministically validated research next-action decision (REX-034)."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    id: str = Field(default_factory=lambda: f"dec_{uuid.uuid4().hex[:12]}")
+    research_run_id: str = Field(description="Research run identifier")
+    iteration: int = Field(default=1, ge=1, description="Loop iteration index")
+    action: DecisionType = Field(description="Validated next-action decision")
+    target_entity_type: str | None = Field(
+        default=None, description="Type of entity targeted (e.g. experiment, hypothesis)"
+    )
+    target_entity_id: str | None = Field(default=None, description="ID of specific entity targeted")
+    rationale: str = Field(description="Explanatory rationale for decision")
+    critique_id: str | None = Field(
+        default=None, description="ID of motivating critique if applicable"
+    )
+    is_validated: bool = Field(default=False, description="Whether deterministic validation passed")
+    validation_errors: tuple[str, ...] = Field(default_factory=tuple)
+    budget_checked: bool = Field(default=False)
+    budget_remaining: MappingProxyType = Field(default_factory=lambda: MappingProxyType({}))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_by: str = Field(default="decision_engine")
+
+    def to_persistence(self) -> DecisionModel:
+        return DecisionModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            iteration=self.iteration,
+            action=self.action.value,
+            target_entity_type=self.target_entity_type,
+            target_entity_id=self.target_entity_id,
+            rationale=self.rationale,
+            critique_id=self.critique_id,
+            is_validated=self.is_validated,
+            validation_errors_json=list(self.validation_errors),
+            budget_checked=self.budget_checked,
+            budget_remaining_json=unfreeze_value(self.budget_remaining),
+            created_at=self.created_at,
+            created_by=self.created_by,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: DecisionModel) -> "ResearchDecision":
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            iteration=model.iteration,
+            action=DecisionType(model.action.lower()),
+            target_entity_type=model.target_entity_type,
+            target_entity_id=model.target_entity_id,
+            rationale=model.rationale,
+            critique_id=model.critique_id,
+            is_validated=model.is_validated,
+            validation_errors=tuple(model.validation_errors_json or []),
+            budget_checked=model.budget_checked,
+            budget_remaining=freeze_value(model.budget_remaining_json or {}),
+            created_at=model.created_at,
+            created_by=model.created_by,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "research_run_id": self.research_run_id,
+            "iteration": self.iteration,
+            "action": self.action.value,
+            "target_entity_type": self.target_entity_type,
+            "target_entity_id": self.target_entity_id,
+            "rationale": self.rationale,
+            "critique_id": self.critique_id,
+            "is_validated": self.is_validated,
+            "validation_errors": list(self.validation_errors),
+            "budget_checked": self.budget_checked,
+            "budget_remaining": unfreeze_value(self.budget_remaining),
+            "created_at": self.created_at.isoformat(),
+            "created_by": self.created_by,
         }

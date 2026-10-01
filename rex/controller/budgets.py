@@ -417,3 +417,6 @@ def record_budget_exceeded_event(
 
     if event_sink is not None:
         event_sink.emit(event)
+
+
+calculate_budget_usage = compute_budget_usage

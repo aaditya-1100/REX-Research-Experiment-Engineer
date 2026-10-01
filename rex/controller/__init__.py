@@ -5,14 +5,22 @@ execution/result/artifact controllers, execution orchestrator, budget accounting
 domain exceptions, and lifecycle management helpers.
 """
 
+from rex.controller.autonomous_loop import (
+    AutonomousLoopConfig,
+    AutonomousLoopResult,
+    AutonomousResearchLoop,
+    LoopIterationResult,
+)
 from rex.controller.budgets import (
     BudgetUsage,
     ResearchBudget,
+    calculate_budget_usage,
     check_budget_limits,
     compute_budget_usage,
     load_run_budget,
     record_budget_exceeded_event,
 )
+from rex.controller.decision_engine import DecisionEngine
 from rex.controller.exceptions import (
     ActorAuthorizationError,
     BudgetExceededError,
@@ -80,9 +88,13 @@ __all__ = [
     "VALID_EXECUTION_TRANSITIONS",
     "VALID_EXPERIMENT_TRANSITIONS",
     "ActorAuthorizationError",
+    "AutonomousLoopConfig",
+    "AutonomousLoopResult",
+    "AutonomousResearchLoop",
     "BudgetExceededError",
     "BudgetUsage",
     "ConcurrencyLimitExceededError",
+    "DecisionEngine",
     "ExecutionAlreadyRunningError",
     "ExecutionAlreadyTerminalError",
     "ExecutionOrchestrator",
@@ -90,6 +102,7 @@ __all__ = [
     "InvalidExecutionStateTransitionError",
     "InvalidExperimentStateTransitionError",
     "InvalidTransitionError",
+    "LoopIterationResult",
     "MissingArtifactError",
     "MissingExecutionError",
     "MissingExperimentError",
@@ -103,6 +116,7 @@ __all__ = [
     "StateTransitionResult",
     "TerminalStateError",
     "assert_experiment_mutable",
+    "calculate_budget_usage",
     "check_budget_limits",
     "compute_budget_usage",
     "create_execution",

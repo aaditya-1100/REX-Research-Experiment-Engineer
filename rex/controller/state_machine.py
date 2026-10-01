@@ -200,7 +200,7 @@ class ResearchStateMachine:
         target_state: ResearchState,
     ) -> bool:
         """Check whether the actor has domain permission for the given transition edge."""
-        if actor in (ActorType.OWNER, ActorType.SYSTEM):
+        if actor in (ActorType.OWNER, ActorType.SYSTEM, ActorType.CONTROLLER):
             return True
 
         edge = (current_state, target_state)

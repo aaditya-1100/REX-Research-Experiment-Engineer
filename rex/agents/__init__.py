@@ -14,6 +14,7 @@ from rex.agents.coding import (
     create_execution_request_from_generated,
     validate_code_proposal,
 )
+from rex.agents.critic import ResearchCriticAgent
 from rex.agents.experiment_designer import ExperimentDesignerAgent
 from rex.agents.hypothesis import HypothesisAgent
 from rex.agents.investigator import InvestigatorAgent
@@ -24,6 +25,7 @@ __all__ = [
     "ExperimentDesignerAgent",
     "HypothesisAgent",
     "InvestigatorAgent",
+    "ResearchCriticAgent",
     "compute_canonical_code_hash",
     "create_execution_request_from_generated",
     "validate_code_proposal",

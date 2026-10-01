@@ -6,6 +6,7 @@ from rex.agents import (
     ExperimentDesignerAgent,
     HypothesisAgent,
     InvestigatorAgent,
+    ResearchCriticAgent,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ExperimentDesignerAgent",
     "HypothesisAgent",
     "InvestigatorAgent",
+    "ResearchCriticAgent",
 ]

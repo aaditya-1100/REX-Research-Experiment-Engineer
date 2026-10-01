@@ -17,6 +17,8 @@ from rex.persistence.models import (
     AnalysisModel,
     ArtifactModel,
     ClaimModel,
+    CritiqueModel,
+    DecisionModel,
     EventModel,
     EvidenceLinkModel,
     ExecutionModel,
@@ -585,3 +587,67 @@ class DatabaseEventSink(EventSink):
         with get_db_session(self.session_factory) as session:
             repo = EventRepository(session)
             repo.record_event(event)
+
+
+class CritiqueRepository:
+    """Repository for persisted research critique records (REX-033)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, critique: CritiqueModel) -> CritiqueModel:
+        self.session.add(critique)
+        self.session.flush()
+        return critique
+
+    def get_by_id(self, critique_id: str) -> CritiqueModel | None:
+        return self.session.get(CritiqueModel, critique_id)
+
+    def list_by_run(self, research_run_id: str) -> Sequence[CritiqueModel]:
+        stmt = (
+            select(CritiqueModel)
+            .where(CritiqueModel.research_run_id == research_run_id)
+            .order_by(CritiqueModel.iteration.asc(), CritiqueModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def get_latest_by_run(self, research_run_id: str) -> CritiqueModel | None:
+        stmt = (
+            select(CritiqueModel)
+            .where(CritiqueModel.research_run_id == research_run_id)
+            .order_by(CritiqueModel.iteration.desc(), CritiqueModel.created_at.desc())
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()
+
+
+class DecisionRepository:
+    """Repository for persisted research next-action decisions (REX-034)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, decision: DecisionModel) -> DecisionModel:
+        self.session.add(decision)
+        self.session.flush()
+        return decision
+
+    def get_by_id(self, decision_id: str) -> DecisionModel | None:
+        return self.session.get(DecisionModel, decision_id)
+
+    def list_by_run(self, research_run_id: str) -> Sequence[DecisionModel]:
+        stmt = (
+            select(DecisionModel)
+            .where(DecisionModel.research_run_id == research_run_id)
+            .order_by(DecisionModel.iteration.asc(), DecisionModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def get_latest_by_run(self, research_run_id: str) -> DecisionModel | None:
+        stmt = (
+            select(DecisionModel)
+            .where(DecisionModel.research_run_id == research_run_id)
+            .order_by(DecisionModel.iteration.desc(), DecisionModel.created_at.desc())
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()

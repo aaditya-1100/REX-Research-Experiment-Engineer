@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -70,6 +70,12 @@ class ResearchRunModel(Base):
     )
     claims: Mapped[list["ClaimModel"]] = relationship(
         "ClaimModel", back_populates="research_run", cascade="all, delete-orphan"
+    )
+    critiques: Mapped[list["CritiqueModel"]] = relationship(
+        "CritiqueModel", back_populates="research_run", cascade="all, delete-orphan"
+    )
+    decisions: Mapped[list["DecisionModel"]] = relationship(
+        "DecisionModel", back_populates="research_run", cascade="all, delete-orphan"
     )
     events: Mapped[list["EventModel"]] = relationship(
         "EventModel", back_populates="research_run", cascade="all, delete-orphan"
@@ -378,6 +384,76 @@ class EvidenceLinkModel(Base):
 
     # Relationships
     claim: Mapped["ClaimModel | None"] = relationship("ClaimModel", back_populates="evidence_links")
+
+
+class CritiqueModel(Base):
+    """Methodological critique of research evidence and experimental design (REX-033)."""
+
+    __tablename__ = "critiques"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: _gen_id("crt"))
+    research_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("research_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    iteration: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    strengths_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    weaknesses_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    contradictions_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    unresolved_questions_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    methodological_concerns_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    findings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    recommended_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    recommended_action_rationale: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    referenced_evidence_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(64), default="critic", nullable=False)
+
+    # Relationships
+    research_run: Mapped["ResearchRunModel"] = relationship(
+        "ResearchRunModel", back_populates="critiques"
+    )
+
+
+class DecisionModel(Base):
+    """Structured next-action decision made by the research decision engine (REX-034)."""
+
+    __tablename__ = "decisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: _gen_id("dec"))
+    research_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("research_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    iteration: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target_entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    critique_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("critiques.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_validated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    validation_errors_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    budget_checked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    budget_remaining_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(64), default="decision_engine", nullable=False)
+
+    # Relationships
+    research_run: Mapped["ResearchRunModel"] = relationship(
+        "ResearchRunModel", back_populates="decisions"
+    )
+    critique: Mapped["CritiqueModel | None"] = relationship("CritiqueModel")
 
 
 class EventModel(Base):
