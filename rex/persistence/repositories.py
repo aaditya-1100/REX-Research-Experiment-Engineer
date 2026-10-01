@@ -293,6 +293,20 @@ class LiteratureSourceRepository(BaseRepository):
     def get_by_id(self, source_id: str) -> LiteratureSourceModel | None:
         return self.session.get(LiteratureSourceModel, source_id)
 
+    def get_by_external_id(
+        self, research_run_id: str, provider: str, external_id: str
+    ) -> LiteratureSourceModel | None:
+        stmt = (
+            select(LiteratureSourceModel)
+            .where(
+                LiteratureSourceModel.research_run_id == research_run_id,
+                LiteratureSourceModel.provider == provider,
+                LiteratureSourceModel.external_id == external_id,
+            )
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()
+
     def list_by_run(self, research_run_id: str) -> Sequence[LiteratureSourceModel]:
         stmt = (
             select(LiteratureSourceModel)

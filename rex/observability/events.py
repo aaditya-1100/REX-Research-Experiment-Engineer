@@ -43,6 +43,9 @@ class EventType(StrEnum):
     CLAIM_CREATED = "claim_created"
     EVIDENCE_LINKED = "evidence_linked"
     ARTIFACT_CREATED = "artifact_created"
+    LITERATURE_SEARCHED = "literature_searched"
+    LITERATURE_RETRIEVED = "literature_retrieved"
+    LITERATURE_INJECTION_DETECTED = "literature_injection_detected"
     BUDGET_EXCEEDED = "budget_exceeded"
     AGENT_ACTION = "agent_action"
     WARNING = "warning"
@@ -58,6 +61,7 @@ class ActorType(StrEnum):
     INVESTIGATOR = "investigator"
     EXECUTION_WORKER = "execution_worker"
     VERIFIER = "verifier"
+    LITERATURE_AGENT = "literature_agent"
     SYSTEM = "system"
 
 

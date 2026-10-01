@@ -22,6 +22,7 @@ from rex.persistence.models import (
     ExecutionModel,
     ExperimentModel,
     HypothesisModel,
+    LiteratureSourceModel,
     ResearchRunModel,
     ResultModel,
 )
@@ -1712,4 +1713,149 @@ class EvidenceLink(BaseModel):
             "created_by": self.created_by,
             "metadata": unfreeze_value(self.metadata),
             "created_at": self.created_at.isoformat(),
+        }
+
+
+def _gen_literature_id() -> str:
+    return f"lit_{uuid.uuid4().hex[:12]}"
+
+
+class LiteratureSource(BaseModel):
+    """Immutable domain representation of an external scholarly literature source (REX-028)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(
+        default_factory=_gen_literature_id,
+        description="Stable unique literature source identifier",
+    )
+    research_run_id: str = Field(description="Associated research investigation identifier")
+    provider: str = Field(
+        description="Scholarly provider name (e.g. openalex, semantic_scholar, arxiv)"
+    )
+    external_id: str = Field(description="Provider-native paper or work identifier")
+    title: str = Field(description="Standardized title of the publication")
+    authors: tuple[str, ...] = Field(
+        default_factory=tuple, description="Immutable tuple of contributing author names"
+    )
+    year: int | None = Field(default=None, description="Publication year")
+    abstract: str = Field(default="", description="Abstract or summary text")
+    url: str = Field(default="", description="Canonical landing page or preprint URL")
+    citation_count: int | None = Field(
+        default=None, ge=0, description="Optional scholarly citation count"
+    )
+    doi: str | None = Field(default=None, description="Optional digital object identifier")
+    retrieved_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="UTC timestamp of retrieval"
+    )
+    raw_metadata: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Preserved raw provider metadata payload",
+    )
+
+    @field_validator("id", "research_run_id", "provider", "external_id")
+    @classmethod
+    def _validate_non_empty(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Field cannot be empty.")
+        return cleaned
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Title cannot be empty.")
+        return cleaned
+
+    @field_validator("authors", mode="before")
+    @classmethod
+    def _validate_authors(cls, v: Any) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, (list, tuple, set)):
+            return tuple(str(a).strip() for a in v if str(a).strip())
+        return (str(v).strip(),)
+
+    @field_validator("raw_metadata", mode="after")
+    @classmethod
+    def _freeze_metadata(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    def content_hash(self) -> str:
+        """Deterministic SHA256 fingerprint of scholarly source identity and textual content."""
+        from rex.evidence.hashing import canonical_json_hash
+
+        payload = {
+            "provider": self.provider,
+            "external_id": self.external_id,
+            "title": self.title,
+            "authors": list(self.authors),
+            "year": self.year,
+            "abstract": self.abstract,
+        }
+        return canonical_json_hash(payload)
+
+    def to_persistence(self) -> LiteratureSourceModel:
+        raw_meta = dict(unfreeze_value(self.raw_metadata))
+        if self.citation_count is not None and "citation_count" not in raw_meta:
+            raw_meta["citation_count"] = self.citation_count
+        if self.doi is not None and "doi" not in raw_meta:
+            raw_meta["doi"] = self.doi
+
+        return LiteratureSourceModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            provider=self.provider,
+            external_id=self.external_id,
+            title=self.title,
+            authors_json=list(self.authors),
+            year=self.year,
+            abstract=self.abstract,
+            url=self.url,
+            retrieved_at=self.retrieved_at,
+            raw_metadata_json=raw_meta,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: LiteratureSourceModel) -> "LiteratureSource":
+        authors = tuple(model.authors_json or [])
+        meta = dict(getattr(model, "raw_metadata_json", {}) or {})
+        citation_count = meta.get("citation_count")
+        doi = meta.get("doi")
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            provider=model.provider,
+            external_id=model.external_id,
+            title=model.title,
+            authors=authors,
+            year=model.year,
+            abstract=model.abstract or "",
+            url=model.url or "",
+            citation_count=citation_count if isinstance(citation_count, int) else None,
+            doi=str(doi) if doi is not None else None,
+            retrieved_at=model.retrieved_at,
+            raw_metadata=meta,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "research_run_id": self.research_run_id,
+            "provider": self.provider,
+            "external_id": self.external_id,
+            "title": self.title,
+            "authors": list(self.authors),
+            "year": self.year,
+            "abstract": self.abstract,
+            "url": self.url,
+            "citation_count": self.citation_count,
+            "doi": self.doi,
+            "retrieved_at": self.retrieved_at.isoformat(),
+            "raw_metadata": unfreeze_value(self.raw_metadata),
+            "content_hash": self.content_hash(),
         }

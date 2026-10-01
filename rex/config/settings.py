@@ -260,6 +260,66 @@ class LiteratureSettings(BaseSettings):
         ),
         description="Optional API key for Semantic Scholar Academic Graph API",
     )
+    openalex_email: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "REX_OPENALEX_EMAIL", "REX_LITERATURE__OPENALEX_EMAIL", "openalex_email"
+        ),
+        description="Optional contact email for OpenAlex polite pool API requests",
+    )
+    max_results_limit: int = Field(
+        default=50,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices(
+            "REX_LITERATURE_MAX_RESULTS",
+            "REX_LITERATURE__MAX_RESULTS_LIMIT",
+            "max_results_limit",
+        ),
+        description="Hard ceiling on maximum literature results returned per query",
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices(
+            "REX_LITERATURE_MAX_RETRIES", "REX_LITERATURE__MAX_RETRIES", "max_retries"
+        ),
+        description="Maximum retry attempts on transient network or 5xx provider failures",
+    )
+    rate_limit_delay_seconds: float = Field(
+        default=0.5,
+        ge=0.0,
+        validation_alias=AliasChoices(
+            "REX_LITERATURE_RATE_DELAY",
+            "REX_LITERATURE__RATE_LIMIT_DELAY_SECONDS",
+            "rate_limit_delay_seconds",
+        ),
+        description="Minimum inter-request delay in seconds for provider etiquette",
+    )
+    openalex_base_url: str = Field(
+        default="https://api.openalex.org",
+        validation_alias=AliasChoices(
+            "REX_OPENALEX_BASE_URL", "REX_LITERATURE__OPENALEX_BASE_URL", "openalex_base_url"
+        ),
+        description="Base URL for OpenAlex API",
+    )
+    semantic_scholar_base_url: str = Field(
+        default="https://api.semanticscholar.org/graph/v1",
+        validation_alias=AliasChoices(
+            "REX_SEMANTIC_SCHOLAR_BASE_URL",
+            "REX_LITERATURE__SEMANTIC_SCHOLAR_BASE_URL",
+            "semantic_scholar_base_url",
+        ),
+        description="Base URL for Semantic Scholar API",
+    )
+    arxiv_base_url: str = Field(
+        default="https://export.arxiv.org/api/query",
+        validation_alias=AliasChoices(
+            "REX_ARXIV_BASE_URL", "REX_LITERATURE__ARXIV_BASE_URL", "arxiv_base_url"
+        ),
+        description="Base URL for arXiv API query endpoint",
+    )
 
 
 class BudgetSettings(BaseSettings):
