@@ -184,7 +184,7 @@ class DockerExecutionWorker:
             non_root_user=non_root_user,
             seed=effective_seed,
         )
-        workspace: Workspace = self.workspace_manager.prepare_workspace(req)
+        workspace: Workspace = self.workspace_manager.prepare_workspace(req, raise_if_exists=True)
 
         # 4. Capture environment metadata and save manifest
         env_meta_dict = capture_safe_environment_metadata(

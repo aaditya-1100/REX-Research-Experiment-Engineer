@@ -137,13 +137,22 @@ class MetricExtractor:
             )
 
         metrics: list[RawMetric] = []
+        seen_names: set[str] = set()
         for row in reader:
             raw_name = row.get(name_key, "").strip()
             raw_val = row.get(value_key, "").strip()
             raw_unit = row.get(unit_key, "").strip() if unit_key else ""
 
             if not raw_name:
+                if raw_val:
+                    raise MalformedMetricError(
+                        f"CSV row has metric value '{raw_val}' but missing or empty metric name."
+                    )
                 continue
+
+            if raw_name in seen_names:
+                raise MalformedMetricError(f"Duplicate metric name '{raw_name}' detected in CSV.")
+            seen_names.add(raw_name)
 
             try:
                 metrics.append(
@@ -177,6 +186,7 @@ class MetricExtractor:
                 candidates.append(extra)
 
         extracted: list[RawMetric] = []
+        seen_names: set[str] = set()
         for file_path in candidates:
             if not file_path.exists() or not file_path.is_file():
                 continue
@@ -185,6 +195,14 @@ class MetricExtractor:
                     metrics = self.parse_metrics_csv(file_path)
                 else:
                     metrics = self.parse_metrics_json(file_path)
+
+                for m in metrics:
+                    if m.metric_name in seen_names:
+                        raise MalformedMetricError(
+                            f"Duplicate metric name '{m.metric_name}' detected across workspace output files."
+                        )
+                    seen_names.add(m.metric_name)
+
                 extracted.extend(metrics)
                 logger.info(
                     "Extracted %d metrics from '%s' in workspace '%s'",
@@ -261,6 +279,7 @@ class MetricExtractor:
         # If data is a list of objects
         if isinstance(raw_data, list):
             metrics: list[RawMetric] = []
+            seen_names: set[str] = set()
             for item in raw_data:
                 if not isinstance(item, dict):
                     raise MalformedMetricError(
@@ -275,9 +294,16 @@ class MetricExtractor:
                     raise MalformedMetricError(
                         f"Metric item missing 'name' or 'metric_name': {item}"
                     )
+                clean_name = str(name).strip()
+                if clean_name in seen_names:
+                    raise MalformedMetricError(
+                        f"Duplicate metric name '{clean_name}' detected in metrics list."
+                    )
+                seen_names.add(clean_name)
+
                 metrics.append(
                     RawMetric(
-                        metric_name=str(name),
+                        metric_name=clean_name,
                         metric_value=val,
                         metric_unit=str(unit),
                         result_data=dict(data) if isinstance(data, Mapping) else {},
@@ -295,6 +321,10 @@ class MetricExtractor:
             for key, val in raw_data.items():
                 if isinstance(val, dict):
                     nested_val = val.get("value") if "value" in val else val.get("metric_value")
+                    if isinstance(nested_val, (dict, list)):
+                        raise MalformedMetricError(
+                            f"Unexpected nested structure inside value for metric '{key}': {nested_val}"
+                        )
                     nested_unit = val.get("unit") or val.get("metric_unit") or ""
                     nested_data = val.get("data") or val.get("result_data") or {}
                     metrics.append(

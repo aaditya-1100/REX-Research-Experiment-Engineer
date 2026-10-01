@@ -24,6 +24,8 @@ def validate_safe_relative_path(path: str | Path, base_dir: Path) -> Path:
     raw_path_str = str(path).strip()
     if not raw_path_str:
         raise PathTraversalError("Path cannot be empty.")
+    if "\x00" in raw_path_str:
+        raise PathTraversalError("Null byte detected in path is forbidden.")
 
     p = Path(raw_path_str)
 
