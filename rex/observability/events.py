@@ -32,6 +32,10 @@ class EventType(StrEnum):
     ANALYSIS_COMPLETED = "analysis_completed"
     VERIFICATION_STARTED = "verification_started"
     VERIFICATION_COMPLETED = "verification_completed"
+    VERIFICATION_FAILED = "verification_failed"
+    REPRODUCTION_STARTED = "reproduction_started"
+    REPRODUCTION_COMPLETED = "reproduction_completed"
+    REPRODUCTION_FAILED = "reproduction_failed"
     CLAIM_CREATED = "claim_created"
     EVIDENCE_LINKED = "evidence_linked"
     ARTIFACT_CREATED = "artifact_created"
@@ -226,6 +230,16 @@ class InMemoryEventSink:
     def events(self) -> list[ResearchEvent]:
         """Return shallow copy of recorded events."""
         return list(self._events)
+
+    def get_by_type(self, event_type: EventType | str) -> list[ResearchEvent]:
+        """Filter recorded events by EventType or string."""
+        target = event_type.value if hasattr(event_type, "value") else str(event_type)
+        return [
+            e
+            for e in self._events
+            if (e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type))
+            == target
+        ]
 
     def clear(self) -> None:
         """Clear recorded events."""

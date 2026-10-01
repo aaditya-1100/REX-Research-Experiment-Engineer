@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from rex.observability.events import freeze_value, unfreeze_value
 from rex.persistence.models import (
     ArtifactModel,
+    ClaimModel,
+    EvidenceLinkModel,
     ExecutionModel,
     ExperimentModel,
     HypothesisModel,
@@ -113,6 +115,68 @@ def _gen_result_id() -> str:
 def _gen_artifact_id() -> str:
     """Generate a stable, unique artifact identifier."""
     return f"art_{uuid.uuid4().hex[:12]}"
+
+
+def _gen_claim_id() -> str:
+    """Generate a stable, unique claim identifier."""
+    return f"clm_{uuid.uuid4().hex[:12]}"
+
+
+def _gen_link_id() -> str:
+    """Generate a stable, unique evidence link identifier."""
+    return f"lnk_{uuid.uuid4().hex[:12]}"
+
+
+class ClaimType(StrEnum):
+    """Semantic taxonomy for research claims."""
+
+    OBSERVATION = "observation"
+    COMPARISON = "comparison"
+    CAUSAL = "causal"
+    METHODOLOGICAL = "methodological"
+    CONCLUSION = "conclusion"
+    EMPIRICAL = "empirical"
+
+
+class ClaimStatus(StrEnum):
+    """Authoritative lifecycle states for research claims."""
+
+    DRAFT = "draft"
+    PROPOSED = "proposed"
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+
+
+class EvidenceNodeType(StrEnum):
+    """Classifications for nodes in the research evidence plane."""
+
+    CLAIM = "claim"
+    ANALYSIS = "analysis"
+    RESULT = "result"
+    EXECUTION = "execution"
+    EXPERIMENT = "experiment"
+    ARTIFACT = "artifact"
+    CODE = "code"
+    CONFIGURATION = "configuration"
+    DATASET = "dataset"
+    LITERATURE_SOURCE = "literature_source"
+
+
+class EvidenceRelationType(StrEnum):
+    """Semantic directional relationship types connecting evidence nodes."""
+
+    SUPPORTED_BY = "supported_by"
+    DERIVED_FROM = "derived_from"
+    PRODUCED_BY = "produced_by"
+    INSTANCE_OF = "instance_of"
+    USES_ARTIFACT = "uses_artifact"
+    USES_DATASET = "uses_dataset"
+    USES_CODE = "uses_code"
+    USES_CONFIGURATION = "uses_configuration"
+    CITES = "cites"
+    REFINES = "refines"
 
 
 class ExperimentStatus(StrEnum):
@@ -1438,6 +1502,210 @@ class GeneratedExperiment(BaseModel):
             "configuration": unfreeze_value(self.configuration),
             "expected_metrics": list(self.expected_metrics),
             "content_hash": self.content_hash,
+            "metadata": unfreeze_value(self.metadata),
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+class Claim(BaseModel):
+    """Immutable domain representation of a scientific claim (REX-024)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(default_factory=_gen_claim_id, description="Stable unique claim identifier")
+    research_run_id: str = Field(description="Parent research run identifier")
+    statement: str = Field(description="Natural language scientific claim or observation")
+    claim_type: ClaimType = Field(
+        default=ClaimType.OBSERVATION, description="Semantic classification of claim"
+    )
+    status: ClaimStatus = Field(
+        default=ClaimStatus.DRAFT, description="Authoritative verification state"
+    )
+    confidence: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Confidence score where applicable"
+    )
+    created_by: str = Field(default="system", description="Author identity or proposing actor")
+    metadata: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Structured supporting attributes and asserted values",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="UTC creation timestamp"
+    )
+
+    @property
+    def text(self) -> str:
+        """Alias for statement matching persistence column."""
+        return self.statement
+
+    @field_validator("id", "research_run_id")
+    @classmethod
+    def _validate_ids(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("ID cannot be empty.")
+        return cleaned
+
+    @field_validator("statement")
+    @classmethod
+    def _validate_statement(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Claim statement cannot be empty.")
+        return cleaned
+
+    @field_validator("metadata", mode="after")
+    @classmethod
+    def _freeze_metadata(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    def to_persistence(self) -> ClaimModel:
+        return ClaimModel(
+            id=self.id,
+            research_run_id=self.research_run_id,
+            text=self.statement,
+            claim_type=self.claim_type.value,
+            confidence=self.confidence,
+            status=self.status.value,
+            created_by=self.created_by,
+            metadata_json=unfreeze_value(self.metadata),
+            created_at=self.created_at,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: ClaimModel) -> "Claim":
+        try:
+            c_type = ClaimType(model.claim_type)
+        except ValueError:
+            c_type = ClaimType.OBSERVATION
+
+        try:
+            c_status = ClaimStatus(model.status)
+        except ValueError:
+            c_status = ClaimStatus.DRAFT
+
+        return cls(
+            id=model.id,
+            research_run_id=model.research_run_id,
+            statement=model.text,
+            claim_type=c_type,
+            status=c_status,
+            confidence=model.confidence,
+            created_by=getattr(model, "created_by", "system"),
+            metadata=getattr(model, "metadata_json", {}) or {},
+            created_at=model.created_at,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "research_run_id": self.research_run_id,
+            "statement": self.statement,
+            "claim_type": self.claim_type.value,
+            "status": self.status.value,
+            "confidence": self.confidence,
+            "created_by": self.created_by,
+            "metadata": unfreeze_value(self.metadata),
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+class EvidenceLink(BaseModel):
+    """Immutable domain representation of an explicit evidence relation edge (REX-023)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(
+        default_factory=_gen_link_id, description="Stable unique evidence link identifier"
+    )
+    research_run_id: str = Field(description="Scoped research run identifier")
+    source_type: EvidenceNodeType = Field(description="Evidence classification of source node")
+    source_id: str = Field(description="Identifier of source node")
+    target_type: EvidenceNodeType = Field(
+        default=EvidenceNodeType.CLAIM, description="Evidence classification of target node"
+    )
+    target_id: str = Field(description="Identifier of target node")
+    relationship_type: EvidenceRelationType = Field(
+        default=EvidenceRelationType.SUPPORTED_BY, description="Directional semantic relation"
+    )
+    created_by: str = Field(default="system", description="Actor who created link")
+    metadata: Mapping[str, Any] = Field(
+        default_factory=lambda: MappingProxyType({}),
+        description="Supplemental edge attributes",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="UTC creation timestamp"
+    )
+
+    @field_validator("id", "research_run_id", "source_id", "target_id")
+    @classmethod
+    def _validate_non_empty(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Identifier cannot be empty.")
+        return cleaned
+
+    @field_validator("metadata", mode="after")
+    @classmethod
+    def _freeze_metadata(cls, v: Any) -> Mapping[str, Any]:
+        if v is None:
+            return MappingProxyType({})
+        return freeze_value(v)
+
+    def to_persistence(self) -> EvidenceLinkModel:
+        claim_id = (
+            self.target_id
+            if self.target_type == EvidenceNodeType.CLAIM
+            else (self.source_id if self.source_type == EvidenceNodeType.CLAIM else None)
+        )
+        return EvidenceLinkModel(
+            id=self.id,
+            claim_id=claim_id,
+            source_type=self.source_type.value,
+            source_id=self.source_id,
+            target_type=self.target_type.value,
+            target_id=self.target_id,
+            relationship_type=self.relationship_type.value,
+            research_run_id=self.research_run_id,
+            created_by=self.created_by,
+            metadata_json=unfreeze_value(self.metadata),
+            created_at=self.created_at,
+        )
+
+    @classmethod
+    def from_persistence(cls, model: EvidenceLinkModel) -> "EvidenceLink":
+        target_t = (
+            EvidenceNodeType(model.target_type)
+            if hasattr(model, "target_type") and model.target_type
+            else EvidenceNodeType.CLAIM
+        )
+        target_i = getattr(model, "target_id", None) or model.claim_id or ""
+        run_id = getattr(model, "research_run_id", None) or ""
+        return cls(
+            id=model.id,
+            research_run_id=run_id,
+            source_type=EvidenceNodeType(model.source_type),
+            source_id=model.source_id,
+            target_type=target_t,
+            target_id=target_i,
+            relationship_type=EvidenceRelationType(model.relationship_type),
+            created_by=getattr(model, "created_by", "system"),
+            metadata=getattr(model, "metadata_json", {}) or {},
+            created_at=model.created_at,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "research_run_id": self.research_run_id,
+            "source_type": self.source_type.value,
+            "source_id": self.source_id,
+            "target_type": self.target_type.value,
+            "target_id": self.target_id,
+            "relationship_type": self.relationship_type.value,
+            "created_by": self.created_by,
             "metadata": unfreeze_value(self.metadata),
             "created_at": self.created_at.isoformat(),
         }

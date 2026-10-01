@@ -6,8 +6,9 @@ provenance graph linkages, and integration with the REX-003 structured event sys
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from rex.observability.events import EventSink, ResearchEvent, create_event
@@ -333,13 +334,30 @@ class ClaimRepository(BaseRepository):
         source_type: str,
         source_id: str,
         relationship_type: str = "supported_by",
+        target_type: str = "claim",
+        target_id: str | None = None,
+        research_run_id: str | None = None,
+        created_by: str = "system",
+        metadata: dict[str, Any] | None = None,
         link_id: str | None = None,
     ) -> EvidenceLinkModel:
+        eff_target_id = target_id or claim_id
+        eff_run_id = research_run_id
+        if eff_run_id is None:
+            claim = self.get_by_id(claim_id)
+            if claim is not None:
+                eff_run_id = claim.research_run_id
+
         link = EvidenceLinkModel(
             claim_id=claim_id,
             source_type=source_type,
             source_id=source_id,
+            target_type=target_type,
+            target_id=eff_target_id,
             relationship_type=relationship_type,
+            research_run_id=eff_run_id,
+            created_by=created_by,
+            metadata_json=metadata or {},
         )
         if link_id is not None:
             link.id = link_id
@@ -350,7 +368,102 @@ class ClaimRepository(BaseRepository):
     def get_evidence_links(self, claim_id: str) -> Sequence[EvidenceLinkModel]:
         stmt = (
             select(EvidenceLinkModel)
-            .where(EvidenceLinkModel.claim_id == claim_id)
+            .where(
+                or_(
+                    EvidenceLinkModel.claim_id == claim_id,
+                    and_(
+                        EvidenceLinkModel.target_type == "claim",
+                        EvidenceLinkModel.target_id == claim_id,
+                    ),
+                )
+            )
+            .order_by(EvidenceLinkModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+
+class EvidenceLinkRepository(BaseRepository):
+    """Repository for querying and persisting typed provenance graph edges."""
+
+    def create(
+        self,
+        link: EvidenceLinkModel | None = None,
+        *,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        target_type: str = "claim",
+        target_id: str | None = None,
+        relationship_type: str = "supported_by",
+        research_run_id: str | None = None,
+        claim_id: str | None = None,
+        created_by: str = "system",
+        metadata: dict[str, Any] | None = None,
+        link_id: str | None = None,
+    ) -> EvidenceLinkModel:
+        if link is None:
+            eff_target_id = target_id or claim_id or ""
+            link = EvidenceLinkModel(
+                claim_id=claim_id,
+                source_type=source_type or "",
+                source_id=source_id or "",
+                target_type=target_type,
+                target_id=eff_target_id,
+                relationship_type=relationship_type,
+                research_run_id=research_run_id,
+                created_by=created_by,
+                metadata_json=metadata or {},
+            )
+            if link_id is not None:
+                link.id = link_id
+        self.session.add(link)
+        self.session.flush()
+        return link
+
+    def get_by_id(self, link_id: str) -> EvidenceLinkModel | None:
+        return self.session.get(EvidenceLinkModel, link_id)
+
+    def list_by_run(self, research_run_id: str) -> Sequence[EvidenceLinkModel]:
+        stmt = (
+            select(EvidenceLinkModel)
+            .where(EvidenceLinkModel.research_run_id == research_run_id)
+            .order_by(EvidenceLinkModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def list_by_claim(self, claim_id: str) -> Sequence[EvidenceLinkModel]:
+        stmt = (
+            select(EvidenceLinkModel)
+            .where(
+                or_(
+                    EvidenceLinkModel.claim_id == claim_id,
+                    and_(
+                        EvidenceLinkModel.target_type == "claim",
+                        EvidenceLinkModel.target_id == claim_id,
+                    ),
+                )
+            )
+            .order_by(EvidenceLinkModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def list_by_source(self, source_type: str, source_id: str) -> Sequence[EvidenceLinkModel]:
+        stmt = (
+            select(EvidenceLinkModel)
+            .where(
+                EvidenceLinkModel.source_type == source_type,
+                EvidenceLinkModel.source_id == source_id,
+            )
+            .order_by(EvidenceLinkModel.created_at.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def list_by_target(self, target_type: str, target_id: str) -> Sequence[EvidenceLinkModel]:
+        stmt = (
+            select(EvidenceLinkModel)
+            .where(
+                EvidenceLinkModel.target_type == target_type,
+                EvidenceLinkModel.target_id == target_id,
+            )
             .order_by(EvidenceLinkModel.created_at.asc())
         )
         return self.session.scalars(stmt).all()
@@ -415,6 +528,10 @@ class EventRepository(BaseRepository):
         self.session.add(model)
         self.session.flush()
         return model
+
+    def emit(self, event: ResearchEvent) -> None:
+        """Emit a ResearchEvent to persistence, satisfying the EventSink protocol."""
+        self.record_event(event)
 
     def get_by_id(self, event_id: str) -> EventModel | None:
         return self.session.get(EventModel, event_id)

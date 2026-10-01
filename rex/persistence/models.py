@@ -139,6 +139,29 @@ class ExperimentModel(Base):
         "ExecutionModel", back_populates="experiment", cascade="all, delete-orphan"
     )
 
+    def __init__(self, **kwargs: Any) -> None:
+        if "title" in kwargs and "objective" not in kwargs:
+            kwargs["objective"] = kwargs.pop("title")
+        if "parameters_json" in kwargs and "specification_json" not in kwargs:
+            kwargs["specification_json"] = kwargs.pop("parameters_json")
+        super().__init__(**kwargs)
+
+    @property
+    def title(self) -> str:
+        return self.objective
+
+    @title.setter
+    def title(self, value: str) -> None:
+        self.objective = value
+
+    @property
+    def parameters_json(self) -> dict[str, Any]:
+        return self.specification_json
+
+    @parameters_json.setter
+    def parameters_json(self, value: dict[str, Any]) -> None:
+        self.specification_json = value
+
 
 class ExecutionModel(Base):
     """Execution run instance with code version, seed, configuration, and telemetry."""
@@ -290,6 +313,8 @@ class ClaimModel(Base):
     claim_type: Mapped[str] = mapped_column(String(32), default="empirical", nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="proposed", nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -302,6 +327,29 @@ class ClaimModel(Base):
         "EvidenceLinkModel", back_populates="claim", cascade="all, delete-orphan"
     )
 
+    def __init__(self, **kwargs: Any) -> None:
+        if "statement" in kwargs and "text" not in kwargs:
+            kwargs["text"] = kwargs.pop("statement")
+        if "confidence_score" in kwargs and "confidence" not in kwargs:
+            kwargs["confidence"] = kwargs.pop("confidence_score")
+        super().__init__(**kwargs)
+
+    @property
+    def statement(self) -> str:
+        return self.text
+
+    @statement.setter
+    def statement(self, value: str) -> None:
+        self.text = value
+
+    @property
+    def confidence_score(self) -> float | None:
+        return self.confidence
+
+    @confidence_score.setter
+    def confidence_score(self, value: float | None) -> None:
+        self.confidence = value
+
 
 class EvidenceLinkModel(Base):
     """Explicit provenance edge linking claims to results, analyses, or literature."""
@@ -309,20 +357,27 @@ class EvidenceLinkModel(Base):
     __tablename__ = "evidence_links"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: _gen_id("lnk"))
-    claim_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False, index=True
+    claim_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("claims.id", ondelete="CASCADE"), nullable=True, index=True
     )
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), default="claim", nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), default="", nullable=False, index=True)
     relationship_type: Mapped[str] = mapped_column(
         String(64), default="supported_by", nullable=False
     )
+    research_run_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("research_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
     # Relationships
-    claim: Mapped["ClaimModel"] = relationship("ClaimModel", back_populates="evidence_links")
+    claim: Mapped["ClaimModel | None"] = relationship("ClaimModel", back_populates="evidence_links")
 
 
 class EventModel(Base):
