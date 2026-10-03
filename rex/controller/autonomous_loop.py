@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from rex.agents.critic import ResearchCriticAgent
     from rex.agents.experiment_designer import ExperimentDesignerAgent
     from rex.agents.hypothesis import HypothesisAgent
+    from rex.evidence.verifier import ResearchVerifier
 
 from rex.analysis.statistics import StatisticalAnalyzer
 from rex.controller.budgets import calculate_budget_usage, check_budget_limits, load_run_budget
@@ -56,7 +57,6 @@ from rex.domain.models import (
 from rex.evidence.claims import ClaimService
 from rex.evidence.graph import EvidenceGraphService, EvidenceNodeType, EvidenceRelationType
 from rex.evidence.reproduce import ExperimentReproducer
-from rex.evidence.verifier import ResearchVerifier
 from rex.observability.events import (
     ActorType,
     EventSink,
@@ -897,6 +897,8 @@ class AutonomousResearchLoop:
 
     def _step_verify(self, research_run_id: str, actor: ActorType) -> None:
         """Run verification protocol and transition VERIFY -> ANALYZE."""
+        from rex.evidence.verifier import ResearchVerifier
+
         with get_db_session(self.session_factory) as session:
             verifier = self.verifier or ResearchVerifier(
                 session=session, event_sink=self.event_sink

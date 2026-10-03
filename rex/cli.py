@@ -7,6 +7,7 @@ experiment reproduction (REX-027).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -17,6 +18,7 @@ from rich.table import Table
 from rex.evidence.reproduce import ExperimentReproducer, ReproducibilityStatus, ReproductionOutcome
 from rex.evidence.verifier import ResearchVerifier, VerificationStatus
 from rex.persistence.database import create_db_engine, create_session_factory
+from rex.reporting.report_generator import ReportGenerator
 
 cli = typer.Typer(
     name="rex",
@@ -30,10 +32,10 @@ console = Console()
 def version_cmd() -> None:
     """Print the REX engine version and active batches."""
     console.print(
-        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.4.0[/bold green]"
+        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.7.0[/bold green]"
     )
     console.print(
-        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence)"
+        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence), 5 (Literature), 6 (Autonomous Loop), 7 (Reporting)"
     )
 
 
@@ -277,6 +279,73 @@ def reproduce_cmd(
 
     if not report.is_reproduced:
         raise typer.Exit(code=1)
+
+
+@cli.command("report")
+def report_cmd(
+    research_run_id: Annotated[
+        str,
+        typer.Argument(help="ID of the research run to generate report for."),
+    ],
+    output_format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Output format: markdown, json, or text."),
+    ] = "markdown",
+    output_path: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Optional filesystem path to write the report to."),
+    ] = None,
+    db_url: Annotated[
+        str | None,
+        typer.Option("--db", "-d", help="Database connection URL override."),
+    ] = None,
+    no_save: Annotated[
+        bool,
+        typer.Option("--no-save", help="Do not save report to artifact store and database."),
+    ] = False,
+) -> None:
+    """Generate an evidence-grounded research report from persisted evidence (REX-036)."""
+    engine = create_db_engine(database_url=db_url)
+    session_factory = create_session_factory(engine)
+
+    with session_factory() as session:
+        generator = ReportGenerator()
+        report = generator.generate_report(
+            research_run_id=research_run_id,
+            session=session,
+            save_artifact=not no_save,
+        )
+
+    fmt = output_format.lower().strip()
+    if fmt == "json":
+        content = report.to_json(indent=2)
+    else:
+        content = report.to_markdown()
+
+    if output_path:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(content, encoding="utf-8")
+        console.print(f"[bold green]Report saved successfully to:[/bold green] {output_path}")
+    else:
+        if fmt == "json":
+            typer.echo(content)
+        else:
+            console.print(
+                Panel(
+                    f"[bold]Title:[/bold] {report.title}\n"
+                    f"[bold]Question:[/bold] {report.research_question}\n"
+                    f"[bold]Status:[/bold] {report.run_status.upper()}\n"
+                    f"[bold]Experiments:[/bold] {report.total_experiments} ({len(report.failed_experiments)} failed)\n"
+                    f"[bold]Measurements:[/bold] {report.total_results}\n"
+                    f"[bold]Claims:[/bold] {len(report.claims)} ({len(report.supported_claims)} supported, {len(report.unsupported_claims)} unsupported)\n"
+                    f"[bold]Evidence Grounded:[/bold] {'[green]YES[/green]' if report.is_fully_grounded else '[red]UNSUPPORTED CLAIMS PRESENT[/red]'}\n"
+                    f"[bold]Content SHA-256:[/bold] {report.content_hash()}",
+                    title=f"Research Report — {report.report_id}",
+                    border_style="green" if report.is_fully_grounded else "yellow",
+                )
+            )
+            console.print("\n" + content)
 
 
 if __name__ == "__main__":

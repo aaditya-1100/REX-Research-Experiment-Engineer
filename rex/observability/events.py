@@ -59,6 +59,7 @@ class EventType(StrEnum):
     LOOP_TERMINATED = "loop_terminated"
     BUDGET_EXCEEDED = "budget_exceeded"
     AGENT_ACTION = "agent_action"
+    REPORT_GENERATED = "report_generated"
     WARNING = "warning"
     ERROR = "error"
 
@@ -75,6 +76,7 @@ class ActorType(StrEnum):
     LITERATURE_AGENT = "literature_agent"
     CRITIC = "critic"
     DECISION_ENGINE = "decision_engine"
+    REPORT_GENERATOR = "report_generator"
     CONTROLLER = "controller"
     SYSTEM = "system"
 
