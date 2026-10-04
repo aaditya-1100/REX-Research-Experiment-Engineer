@@ -1,0 +1,1085 @@
+[
+  {
+    "id": "TC001",
+    "title": "Start a research run and watch stage progression",
+    "description": "A user can start a research run and see the run begin progressing through stages.",
+    "category": "Research Lifecycle Control",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /research"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing research run"
+      },
+      {
+        "type": "action",
+        "description": "Start the run"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify stage progression is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the run is active"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC002",
+    "title": "Trace a claim to its deterministic lineage",
+    "description": "A user can open the evidence hub and inspect a claim’s lineage back to its supporting evidence.",
+    "category": "Evidence Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /evidence"
+      },
+      {
+        "type": "action",
+        "description": "Open a claim’s lineage view"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the lineage DAG is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the root hypothesis and supporting nodes are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC003",
+    "title": "Create a new research investigation",
+    "description": "A user can create a new research investigation from the research list and see it added to the list.",
+    "category": "Research Investigation Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /research"
+      },
+      {
+        "type": "action",
+        "description": "Open the new investigation flow"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a research question with a unique topic"
+      },
+      {
+        "type": "action",
+        "description": "Select a domain"
+      },
+      {
+        "type": "action",
+        "description": "Create the investigation"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new research run appears in the list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC004",
+    "title": "Pause and resume a research run",
+    "description": "A user can pause a running research investigation and resume it afterward.",
+    "category": "Research Lifecycle Control",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /research"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing research run"
+      },
+      {
+        "type": "action",
+        "description": "Start the run"
+      },
+      {
+        "type": "action",
+        "description": "Pause the run"
+      },
+      {
+        "type": "action",
+        "description": "Resume the run"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the run continues through the next stage"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the run remains in progress"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC005",
+    "title": "Trace a claim from the evidence hub to its lineage view",
+    "description": "This test verifies that a user can open a claim from the evidence hub and reach the lineage view for that claim.",
+    "category": "Deterministic Evidence Lineage Tracing",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /evidence"
+      },
+      {
+        "type": "action",
+        "description": "Open the lineage view for a claim"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the claim lineage view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the evidence chain from claim to hypothesis is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC006",
+    "title": "Inspect the deterministic evidence chain for a claim",
+    "description": "This test verifies that a user can inspect the lineage DAG and see how a claim is supported by evidence back to the hypothesis.",
+    "category": "Deterministic Evidence Lineage Tracing",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /evidence/lineage/:claimId"
+      },
+      {
+        "type": "action",
+        "description": "Inspect the lineage DAG nodes"
+      },
+      {
+        "type": "action",
+        "description": "Open a node in the inspection drawer"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the inspection drawer displays node details"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the claim support path is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC007",
+    "title": "Review claim support status in the evidence hub",
+    "description": "A user can review evidence claims and confirm which claims are supported or unsupported.",
+    "category": "Evidence Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /evidence"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify claims are listed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify claim support status is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC008",
+    "title": "Inspect live telemetry for a research run",
+    "description": "A user can open the live telemetry view for a research run and inspect streaming events.",
+    "category": "Research Lifecycle Control",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /research"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing research run"
+      },
+      {
+        "type": "action",
+        "description": "Open the live telemetry drawer"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify streaming research events are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify telemetry details for the run are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC009",
+    "title": "Browse artifact catalog and verify integrity",
+    "description": "This verifies that a user can browse artifacts, verify a file hash, and see the resulting integrity status.",
+    "category": "Artifact Inspection & Cryptographic Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "action",
+        "description": "Filter the artifact catalog by file type"
+      },
+      {
+        "type": "action",
+        "description": "Verify an artifact hash"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an integrity status is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the artifact remains visible in the catalog"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC010",
+    "title": "Open a research run for inspection",
+    "description": "A user can open an existing research run from the research list and view its detail page.",
+    "category": "Research Investigation Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /research"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing research run"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the run detail view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the investigation context is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC011",
+    "title": "Inspect metric progression for an experiment",
+    "description": "A user can view an experiment’s metric progression and confirm the trend data is available.",
+    "category": "Experiment Detail & Metric Progression",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments"
+      },
+      {
+        "type": "action",
+        "description": "Open a listed experiment"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a metric progression chart is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify execution history is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC012",
+    "title": "Save updated timeout and tolerance settings",
+    "description": "A user can change settings and save them successfully so the updated configuration is confirmed.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the timeout field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the tolerance field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Save the settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a confirmation message is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated configuration is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC013",
+    "title": "Browse artifacts and verify integrity status",
+    "description": "A user can open the artifact browser and confirm artifact integrity information is displayed.",
+    "category": "Artifact Integrity Checks",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify artifacts are listed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify SHA-256 checksum and integrity status are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC014",
+    "title": "Review the experiment catalog and open an experiment",
+    "description": "A user can browse the experiment catalog and open a completed experiment for detail inspection.",
+    "category": "Experiment Detail & Metric Progression",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments"
+      },
+      {
+        "type": "action",
+        "description": "Open a listed experiment"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the experiment detail view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the experiment objective and specification are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC015",
+    "title": "Review a research report's structure and grounding",
+    "description": "This test verifies that a user can open a generated report and review its executive summary, methodology, experiment matrix, and metrics tables.",
+    "category": "Scientific Report Viewer",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /reports"
+      },
+      {
+        "type": "action",
+        "description": "Open a report"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the report detail view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the executive summary, methodology, experiment matrix, and metrics tables are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC016",
+    "title": "Switch between stdout and stderr logs",
+    "description": "A user can inspect both stdout and stderr output for an experiment run.",
+    "category": "Experiment Detail & Metric Progression",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments"
+      },
+      {
+        "type": "action",
+        "description": "Open a listed experiment"
+      },
+      {
+        "type": "action",
+        "description": "Open the stdout logs view"
+      },
+      {
+        "type": "action",
+        "description": "Switch to the stderr logs view"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify execution log content is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify both output channels are accessible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC017",
+    "title": "Preview artifact contents before download",
+    "description": "This verifies that a user can open an artifact preview, inspect its contents, and access the download action.",
+    "category": "Artifact Inspection & Cryptographic Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "action",
+        "description": "Open an artifact preview"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the artifact content preview is displayed"
+      },
+      {
+        "type": "action",
+        "description": "Close the preview"
+      },
+      {
+        "type": "action",
+        "description": "Open the artifact download action"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the artifact remains available in the catalog"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC018",
+    "title": "Open a generated report for offline review",
+    "description": "A user can open a report and review its research summary, methodology, and metrics.",
+    "category": "Report Viewing",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /reports"
+      },
+      {
+        "type": "action",
+        "description": "Open a generated report"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the report detail view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the methodology and metrics sections are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC019",
+    "title": "Inspect report citations and supporting evidence",
+    "description": "A user can review citations in a report and confirm the report includes supporting evidence references.",
+    "category": "Report Viewing",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /reports"
+      },
+      {
+        "type": "action",
+        "description": "Open a generated report"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify citation references are visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify evidence-backed report content is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC020",
+    "title": "Confirm intact artifact hash result",
+    "description": "This verifies that a user can run a hash check and review the SHA-256 integrity result for a selected artifact.",
+    "category": "Artifact Inspection & Cryptographic Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "action",
+        "description": "Verify an artifact hash"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the SHA-256 result is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the file integrity status is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC021",
+    "title": "Persist settings after reload",
+    "description": "A user can save settings and later see the same values still present when returning to the page.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the timeout field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the tolerance field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Save the settings"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated configuration values are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC022",
+    "title": "Preview an artifact before reviewing it",
+    "description": "A user can open an artifact preview and inspect its contents before taking further action.",
+    "category": "Artifact Integrity Checks",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "action",
+        "description": "Open an artifact preview"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the artifact preview is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the artifact contents are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC023",
+    "title": "Search within experiment execution logs",
+    "description": "A user can filter or search experiment logs and see the matching output update.",
+    "category": "Experiment Detail & Metric Progression",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments"
+      },
+      {
+        "type": "action",
+        "description": "Open a listed experiment"
+      },
+      {
+        "type": "action",
+        "description": "Open the execution logs view"
+      },
+      {
+        "type": "action",
+        "description": "Enter a search term that matches log content"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the log list updates to matching entries"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify non-matching log lines are hidden"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC024",
+    "title": "Confirm a valid artifact integrity state",
+    "description": "A user can identify an artifact whose checksum passes integrity validation and see it marked as valid.",
+    "category": "Artifact Integrity Checks",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify at least one artifact is marked as valid"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify integrity validation details are visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC025",
+    "title": "Reset settings after edits",
+    "description": "A user can discard unsaved changes and return to the last saved configuration.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the timeout field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the tolerance field with a new valid value"
+      },
+      {
+        "type": "action",
+        "description": "Reset the settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the current configuration values are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the edited values are no longer present"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC026",
+    "title": "Compare two experiments and review the comparison summary",
+    "description": "This test verifies that a user can select two experiments, run a comparison, and see the resulting parameter, metric, and reproducibility summary.",
+    "category": "Side-by-Side Experiment Comparison",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments/compare"
+      },
+      {
+        "type": "action",
+        "description": "Select two experiments for comparison"
+      },
+      {
+        "type": "action",
+        "description": "Compare the selected experiments"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify parameter differences are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify metric deltas and reproducibility assessment are displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC027",
+    "title": "Compare experiments with differing outcomes",
+    "description": "This test verifies that a user can compare experiments with different results and identify which metrics improved or regressed.",
+    "category": "Side-by-Side Experiment Comparison",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments/compare"
+      },
+      {
+        "type": "action",
+        "description": "Select experiments with differing outcomes"
+      },
+      {
+        "type": "action",
+        "description": "Compare the selected experiments"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify metric improvement and regression indicators are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the comparison summary is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC028",
+    "title": "Open command palette and jump to a page",
+    "description": "This verifies that a user can open the command palette, search for a destination, and navigate to it from the keyboard.",
+    "category": "Global Command Palette",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the command palette with the keyboard"
+      },
+      {
+        "type": "action",
+        "description": "Type a search query"
+      },
+      {
+        "type": "action",
+        "description": "Move to a result and select it"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected destination page is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC029",
+    "title": "Search command palette results for a run or experiment",
+    "description": "This verifies that the command palette can search across runs and experiments and show a matching result that can be opened.",
+    "category": "Global Command Palette",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the command palette with the keyboard"
+      },
+      {
+        "type": "action",
+        "description": "Type a search query for a run or experiment"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify matching results are displayed"
+      },
+      {
+        "type": "action",
+        "description": "Select a matching result"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected item page is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC030",
+    "title": "Review current settings values",
+    "description": "A user can open settings and see the current configuration values before making changes.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the current configuration values are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the settings controls are available"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC031",
+    "title": "Download a report for offline review",
+    "description": "This test verifies that a user can open a report and download it in a structured format for offline review.",
+    "category": "Scientific Report Viewer",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /reports"
+      },
+      {
+        "type": "action",
+        "description": "Open a report"
+      },
+      {
+        "type": "action",
+        "description": "Download the report as Markdown or JSON"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the download action is available"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the report detail view remains available"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC032",
+    "title": "Toggle theme appearance",
+    "description": "This verifies that a user can switch between light and dark appearance modes from the interface.",
+    "category": "Theme Switching",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Toggle the theme"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the interface appearance changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the theme control remains available"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC033",
+    "title": "Persist theme preference after reload",
+    "description": "This verifies that a user's theme preference remains active after reloading the application.",
+    "category": "Theme Switching",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Toggle the theme"
+      },
+      {
+        "type": "action",
+        "description": "Reload the page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected theme is still active"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the interface remains usable after reload"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC034",
+    "title": "Keep validation visible for invalid settings values",
+    "description": "A user sees validation feedback when attempting to enter unsupported configuration values, preventing an invalid save.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the timeout field with an invalid value"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the tolerance field with an invalid value"
+      },
+      {
+        "type": "action",
+        "description": "Save the settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a validation error is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the settings are not saved"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC035",
+    "title": "Check a report for unsupported claims",
+    "description": "This test verifies that a user can open a report and see unsupported claim warnings when the report is not fully grounded.",
+    "category": "Scientific Report Viewer",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /reports"
+      },
+      {
+        "type": "action",
+        "description": "Open a report that contains unsupported claims"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify unsupported claim warnings are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the report content remains accessible"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC036",
+    "title": "Handle an experiment with no matching log search results",
+    "description": "A user can search experiment logs for text that has no matches and see an empty result state.",
+    "category": "Experiment Detail & Metric Progression",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /experiments"
+      },
+      {
+        "type": "action",
+        "description": "Open a listed experiment"
+      },
+      {
+        "type": "action",
+        "description": "Open the execution logs view"
+      },
+      {
+        "type": "action",
+        "description": "Enter a search term that does not match any log entries"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an empty state for log search results is shown"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify no log entries are displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC037",
+    "title": "Show artifact filter empty state",
+    "description": "This verifies that artifact filtering can produce an empty catalog state when no files match the selected type.",
+    "category": "Artifact Inspection & Cryptographic Verification",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /artifacts"
+      },
+      {
+        "type": "action",
+        "description": "Filter the artifact catalog by a type with no matches"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an empty state message is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify no artifacts are shown"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC038",
+    "title": "Close command palette without navigating",
+    "description": "This verifies that a user can dismiss the command palette and remain on the current page.",
+    "category": "Global Command Palette",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the command palette with the keyboard"
+      },
+      {
+        "type": "action",
+        "description": "Press Escape"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the command palette is closed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the current page remains displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC039",
+    "title": "Show empty state when configuration is unavailable",
+    "description": "A user sees an empty or unavailable state if no configuration values can be displayed on the settings page.",
+    "category": "Settings Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an empty state or unavailable message is visible"
+      }
+    ],
+    "priority": "Low"
+  }
+]

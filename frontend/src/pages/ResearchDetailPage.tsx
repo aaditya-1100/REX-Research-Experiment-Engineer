@@ -96,6 +96,51 @@ export const ResearchDetailPage: React.FC = () => {
     return () => unsubscribe();
   }, [runId]);
 
+  const handleStart = async () => {
+    if (!run) return;
+    try {
+      await api.startResearchRun(run.id);
+      const [updated, evts] = await Promise.all([
+        api.getResearchRun(run.id),
+        api.getRunEvents(run.id, 50),
+      ]);
+      setRun(updated);
+      setEvents(evts);
+    } catch (err) {
+      console.error("Failed to start run", err);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!run) return;
+    try {
+      await api.pauseResearchRun(run.id);
+      const [updated, evts] = await Promise.all([
+        api.getResearchRun(run.id),
+        api.getRunEvents(run.id, 50),
+      ]);
+      setRun(updated);
+      setEvents(evts);
+    } catch (err) {
+      console.error("Failed to pause run", err);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!run) return;
+    try {
+      await api.resumeResearchRun(run.id);
+      const [updated, evts] = await Promise.all([
+        api.getResearchRun(run.id),
+        api.getRunEvents(run.id, 50),
+      ]);
+      setRun(updated);
+      setEvents(evts);
+    } catch (err) {
+      console.error("Failed to resume run", err);
+    }
+  };
+
   if (isLoading || !run) {
     return (
       <div className="py-20 text-center space-y-2">
@@ -258,13 +303,27 @@ export const ResearchDetailPage: React.FC = () => {
               <Button
                 variant="primary"
                 leftIcon={<Play className="w-3.5 h-3.5" />}
-                onClick={async () => {
-                  await api.startResearchRun(run.id);
-                  const updated = await api.getResearchRun(run.id);
-                  setRun(updated);
-                }}
+                onClick={handleStart}
               >
                 Start Run
+              </Button>
+            )}
+            {run.status === "PAUSED" && (
+              <Button
+                variant="primary"
+                leftIcon={<Play className="w-3.5 h-3.5" />}
+                onClick={handleResume}
+              >
+                Resume Run
+              </Button>
+            )}
+            {run.status !== "INITIALIZE" && run.status !== "PAUSED" && !["FAILED", "ABORTED", "DECIDE"].includes(run.status) && (
+              <Button
+                variant="secondary"
+                leftIcon={<Pause className="w-3.5 h-3.5" />}
+                onClick={handlePause}
+              >
+                Pause Run
               </Button>
             )}
           </div>
@@ -350,14 +409,34 @@ export const ResearchDetailPage: React.FC = () => {
                   Next: <span className="text-rex-secondary">{run.next_action || "Execute scheduled experiment"}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    leftIcon={<Pause className="w-3 h-3" />}
-                    onClick={() => api.pauseResearchRun(run.id)}
-                  >
-                    Pause
-                  </Button>
+                  {run.status === "PAUSED" ? (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      leftIcon={<Play className="w-3 h-3" />}
+                      onClick={handleResume}
+                    >
+                      Resume
+                    </Button>
+                  ) : run.status === "INITIALIZE" ? (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      leftIcon={<Play className="w-3 h-3" />}
+                      onClick={handleStart}
+                    >
+                      Start
+                    </Button>
+                  ) : !["FAILED", "ABORTED", "DECIDE"].includes(run.status) ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<Pause className="w-3 h-3" />}
+                      onClick={handlePause}
+                    >
+                      Pause
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>

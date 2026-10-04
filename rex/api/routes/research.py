@@ -177,6 +177,11 @@ def _build_run_response(session: Session, run: ResearchRunModel) -> ResearchRunR
     elif run.status == "FAILED":
         current_action = "Research terminated with failure"
         current_action_progress = 1.0
+    elif run.status == "PAUSED":
+        current_action = "Run paused by user"
+        current_action_reason = "Execution temporarily suspended."
+        next_action = "Resume run to continue autonomous cycle"
+        current_action_progress = 0.20
     elif latest_decision:
         current_action = f"Executing decision: {latest_decision.action}"
         current_action_reason = latest_decision.rationale
@@ -303,6 +308,8 @@ def pause_run(
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
     # Record pause event
+    model.status = "PAUSED"
+    session.add(model)
     event = create_event(
         event_type=EventType.AUTONOMOUS_ACTION_COMPLETED,
         actor=ActorType.OWNER,
@@ -324,6 +331,8 @@ def resume_run(
     if not model:
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
+    model.status = "UNDERSTAND"
+    session.add(model)
     event = create_event(
         event_type=EventType.AUTONOMOUS_ACTION_STARTED,
         actor=ActorType.OWNER,
