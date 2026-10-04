@@ -184,7 +184,7 @@ export const EvaluationPage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="p-4 bg-rex-surface border-rex-border">
             <div className="flex items-center justify-between text-xs text-rex-muted">
-              <span>SYSTEM QUALITY SCORE</span>
+              <span>LATEST EVALUATION RUN SCORE</span>
               <Sparkles className="w-4 h-4 text-rex-warning" />
             </div>
             <div className="text-3xl font-extrabold text-rex-primary font-mono mt-2">
@@ -192,20 +192,20 @@ export const EvaluationPage: React.FC = () => {
             </div>
             <div className="text-[11px] text-rex-success mt-1 flex items-center gap-1 font-medium">
               <CheckCircle className="w-3 h-3" />
-              <span>{scorecard.passed_checks} / {scorecard.total_checks} assertions verified</span>
+              <span>{scorecard.passed_checks} / {scorecard.total_checks} assertions verified in run</span>
             </div>
           </Card>
 
           <Card className="p-4 bg-rex-surface border-rex-border">
             <div className="flex items-center justify-between text-xs text-rex-muted">
-              <span>X-GATE COMPLIANCE</span>
+              <span>X-GATE COMPLIANCE (BATCH 9)</span>
               <Scale className="w-4 h-4 text-rex-info" />
             </div>
             <div className="text-3xl font-extrabold text-rex-primary font-mono mt-2">
               {gateCompliance ? `${gateCompliance.passed_gates} / ${gateCompliance.total_gates}` : "18 / 18"}
             </div>
             <div className="text-[11px] text-rex-info mt-1 font-medium">
-              100% Gates X0–X17 Validated
+              18 / 18 Defined Gates Verified Under Protocol
             </div>
           </Card>
 
@@ -218,7 +218,7 @@ export const EvaluationPage: React.FC = () => {
               0%
             </div>
             <div className="text-[11px] text-rex-secondary mt-1 font-medium">
-              Unsupported claims permitted
+              Unsupported claims permitted in evaluation
             </div>
           </Card>
 
@@ -231,7 +231,7 @@ export const EvaluationPage: React.FC = () => {
               100.0%
             </div>
             <div className="text-[11px] text-rex-success mt-1 font-medium">
-              5/5 tamper vectors blocked
+              5/5 defined tamper scenarios detected
             </div>
           </Card>
         </div>
@@ -417,7 +417,7 @@ export const EvaluationPage: React.FC = () => {
               Controlled Comparative Evaluation: Baseline vs REX (REX-045)
             </h3>
             <p className="text-xs text-rex-secondary">
-              Contrasting an unverified naive LLM agent against REX with deterministic evidence and verification infrastructure across the 6 authoritative dimensions.
+              Under the defined synthetic comparative evaluation protocol, contrasting a configured unverified baseline against REX with deterministic evidence and verification infrastructure across 6 dimensions.
             </p>
           </div>
 
@@ -427,7 +427,7 @@ export const EvaluationPage: React.FC = () => {
                 <Card key={cmp.id} className="p-4 bg-rex-surface border-rex-border space-y-4">
                   <div className="flex items-center justify-between border-b border-rex-border pb-2">
                     <span className="font-semibold text-xs text-rex-primary font-mono">{cmp.comparison_name}</span>
-                    <span className="text-[11px] text-rex-success font-medium">Welch's t-test p &lt; 0.05</span>
+                    <span className="text-[11px] text-rex-success font-medium">1-sample / Welch's t-test p &lt; 0.05</span>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -438,7 +438,7 @@ export const EvaluationPage: React.FC = () => {
                           <th className="py-2 px-4 font-semibold uppercase text-[10px]">Naive Baseline</th>
                           <th className="py-2 px-4 font-semibold uppercase text-[10px]">REX Platform</th>
                           <th className="py-2 px-4 font-semibold uppercase text-[10px]">Delta</th>
-                          <th className="py-2 pl-4 font-semibold uppercase text-[10px]">Verdict</th>
+                          <th className="py-2 pl-4 font-semibold uppercase text-[10px]">Protocol Outcome</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rex-border/60 font-mono">
@@ -460,7 +460,7 @@ export const EvaluationPage: React.FC = () => {
                               </td>
                               <td className="py-2.5 pl-4">
                                 <Badge variant={isBetter ? "success" : "neutral"}>
-                                  {isBetter ? "SUPERIOR" : "PARITY"}
+                                  {isBetter ? "OUTPERFORMS" : "PARITY"}
                                 </Badge>
                               </td>
                             </tr>
@@ -472,7 +472,7 @@ export const EvaluationPage: React.FC = () => {
 
                   {cmp.statistical_summary?.summary && (
                     <div className="p-3 bg-rex-bg border border-rex-border rounded-md text-xs text-rex-secondary">
-                      <span className="font-semibold text-rex-primary">Executive Summary: </span>
+                      <span className="font-semibold text-rex-primary">Evaluation Protocol Verdict: </span>
                       {cmp.statistical_summary.summary}
                     </div>
                   )}

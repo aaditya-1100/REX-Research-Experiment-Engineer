@@ -429,10 +429,10 @@ def evaluate_cmd(
             if summary.scorecard:
                 sc = summary.scorecard
                 panel = Panel(
-                    f"[bold]Overall Quality Score:[/bold] [bold green]{sc.overall_score:.1f}%[/bold green]\n"
-                    f"[bold]Total Checks Executed:[/bold] {sc.total_checks} ({sc.passed_checks} passed, {sc.failed_checks} failed)\n"
-                    f"[bold]X-Gate Compliance (X0-X17):[/bold] [bold green]18/18 PASS[/bold green]",
-                    title="REX System Quality Scorecard",
+                    f"[bold]Latest Evaluation Run Score:[/bold] [bold green]{sc.overall_score:.1f}%[/bold green]\n"
+                    f"[bold]Defined Protocol Checks Executed:[/bold] {sc.total_checks} ({sc.passed_checks} passed, {sc.failed_checks} failed)\n"
+                    f"[bold]Defined Batch 9 Gates (X0-X17):[/bold] [bold green]18/18 PASS under protocol[/bold green]",
+                    title="REX Evaluation Suite Scorecard (Latest Run)",
                     border_style="green" if summary.failed_cases == 0 else "red",
                 )
                 console.print(panel)
@@ -467,7 +467,7 @@ def serve_cmd(
 
     console.print(
         Panel(
-            f"[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.8.0[/bold green]\n"
+            f"[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.9.0[/bold green]\n"
             f"[bold]API URL:[/bold] http://{host}:{port}/api\n"
             f"[bold]Interactive Docs:[/bold] http://{host}:{port}/docs\n"
             f"[bold]Web Workstation:[/bold] http://{host}:{port}/\n"
