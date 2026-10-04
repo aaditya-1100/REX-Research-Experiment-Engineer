@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light Theme (Near-white background, subtle gray borders, deep slate text) */
+  --color-bg: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-elevated: #F1F5F9;
+  --color-border: #E2E8F0;
+  --color-border-subtle: #EDF2F7;
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94A3B8;
+
+  /* Semantic - Restrained, non-neon, professional */
+  --color-success: #059669;
+  --color-success-subtle: #ECFDF5;
+  --color-warning: #D97706;
+  --color-warning-subtle: #FFFBEB;
+  --color-error: #DC2626;
+  --color-error-subtle: #FEF2F2;
+  --color-info: #2563EB;
+  --color-info-subtle: #EFF6FF;
+  --color-accent: #7C3AED;
+  --color-accent-subtle: #F5F3FF;
+}
+
+.dark {
+  /* Dark Theme (Dark-first, near-black background, restrained charcoal surfaces) */
+  --color-bg: #0B0D10;
+  --color-surface: #11151A;
+  --color-surface-elevated: #171C22;
+  --color-border: #28303A;
+  --color-border-subtle: #1C232B;
+  --color-text-primary: #F3F5F7;
+  --color-text-secondary: #A7B0BA;
+  --color-text-muted: #737D88;
+
+  /* Semantic - Dark theme equivalents */
+  --color-success: #34D399;
+  --color-success-subtle: rgba(52, 211, 153, 0.12);
+  --color-warning: #FBBF24;
+  --color-warning-subtle: rgba(251, 191, 36, 0.12);
+  --color-error: #F87171;
+  --color-error-subtle: rgba(248, 113, 113, 0.12);
+  --color-info: #60A5FA;
+  --color-info-subtle: rgba(96, 165, 250, 0.12);
+  --color-accent: #A78BFA;
+  --color-accent-subtle: rgba(167, 139, 250, 0.12);
+}
+
+/* Custom Scrollbar for scientific workstation density */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}

@@ -55,3 +55,10 @@ temp/
 *.sqlite
 *.sqlite3
 /data/
+
+# Frontend / Node
+node_modules/
+.npm/
+!frontend/dist/
+!frontend/dist/**
+

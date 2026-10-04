@@ -32,10 +32,10 @@ console = Console()
 def version_cmd() -> None:
     """Print the REX engine version and active batches."""
     console.print(
-        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.7.0[/bold green]"
+        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.8.0[/bold green]"
     )
     console.print(
-        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence), 5 (Literature), 6 (Autonomous Loop), 7 (Reporting)"
+        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence), 5 (Literature), 6 (Autonomous Loop), 7 (Reporting), 8 (Frontend UI)"
     )
 
 
@@ -346,6 +346,44 @@ def report_cmd(
                 )
             )
             console.print("\n" + content)
+
+
+@cli.command("serve")
+def serve_cmd(
+    host: Annotated[
+        str,
+        typer.Option("--host", "-h", help="Bind host network interface."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Bind port number."),
+    ] = 8000,
+    db_url: Annotated[
+        str | None,
+        typer.Option("--db", "-d", help="Database connection URL override."),
+    ] = None,
+) -> None:
+    """Start the REX backend HTTP API server and frontend workstation (REX-037)."""
+    import uvicorn
+
+    from rex.api.app import create_app
+
+    engine = create_db_engine(database_url=db_url)
+    session_factory = create_session_factory(engine)
+    app = create_app(engine=engine, session_factory=session_factory)
+
+    console.print(
+        Panel(
+            f"[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.8.0[/bold green]\n"
+            f"[bold]API URL:[/bold] http://{host}:{port}/api\n"
+            f"[bold]Interactive Docs:[/bold] http://{host}:{port}/docs\n"
+            f"[bold]Web Workstation:[/bold] http://{host}:{port}/\n"
+            f"[bold]Database:[/bold] {engine.url}",
+            title="REX Research Workstation Server",
+            border_style="cyan",
+        )
+    )
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
