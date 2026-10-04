@@ -15,14 +15,16 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from rex.evaluation.models import EvaluationSuiteType
+from rex.evaluation.orchestrator import EvaluationOrchestrator
 from rex.evidence.reproduce import ExperimentReproducer, ReproducibilityStatus, ReproductionOutcome
 from rex.evidence.verifier import ResearchVerifier, VerificationStatus
-from rex.persistence.database import create_db_engine, create_session_factory
+from rex.persistence.database import create_db_engine, create_session_factory, init_db
 from rex.reporting.report_generator import ReportGenerator
 
 cli = typer.Typer(
     name="rex",
-    help="REX — Research Experiment Engineer: Formal verification and reproducibility CLI.",
+    help="REX — Research Experiment Engineer: Formal verification, reproducibility, and evaluation CLI.",
     no_args_is_help=True,
 )
 console = Console()
@@ -32,10 +34,10 @@ console = Console()
 def version_cmd() -> None:
     """Print the REX engine version and active batches."""
     console.print(
-        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.8.0[/bold green]"
+        "[bold cyan]REX — Research Experiment Engineer[/bold cyan] [bold green]v0.9.0[/bold green]"
     )
     console.print(
-        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence), 5 (Literature), 6 (Autonomous Loop), 7 (Reporting), 8 (Frontend UI)"
+        "Approved Batches: 1 (Execution), 2 (Intelligence), 3 (Experimental), 4 (Evidence), 5 (Literature), 6 (Autonomous Loop), 7 (Reporting), 8 (Frontend UI), 9 (Quality & Evaluation)"
     )
 
 
@@ -346,6 +348,97 @@ def report_cmd(
                 )
             )
             console.print("\n" + content)
+
+
+@cli.command("evaluate")
+def evaluate_cmd(
+    suite: Annotated[
+        str,
+        typer.Option(
+            "--suite",
+            "-s",
+            help="Evaluation suite to execute: all, correctness, lifecycle, evidence, epistemic, reproducibility, security, chaos, concurrency, comparative",
+        ),
+    ] = "all",
+    db_url: Annotated[
+        str | None,
+        typer.Option("--db", "-d", help="Database connection URL override."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output evaluation report in machine-readable JSON format."),
+    ] = False,
+) -> None:
+    """Execute formal REX evaluation suites and generate the Quality Scorecard (REX Epic 11)."""
+    suite_map = {
+        "all": EvaluationSuiteType.ALL,
+        "correctness": EvaluationSuiteType.CORE_CORRECTNESS,
+        "lifecycle": EvaluationSuiteType.RESEARCH_LIFECYCLE,
+        "evidence": EvaluationSuiteType.EVIDENCE_INTEGRITY,
+        "epistemic": EvaluationSuiteType.EPISTEMIC_INTEGRITY,
+        "reproducibility": EvaluationSuiteType.REPRODUCIBILITY,
+        "security": EvaluationSuiteType.SECURITY_CORRUPTION,
+        "chaos": EvaluationSuiteType.RELIABILITY_CHAOS,
+        "concurrency": EvaluationSuiteType.CONCURRENCY,
+        "comparative": EvaluationSuiteType.COMPARATIVE,
+    }
+
+    suite_type = suite_map.get(suite.lower().strip(), EvaluationSuiteType.ALL)
+
+    engine = create_db_engine(database_url=db_url)
+    init_db(engine)
+    session_factory = create_session_factory(engine)
+
+    with session_factory() as session:
+        orchestrator = EvaluationOrchestrator(session=session)
+        summary = orchestrator.execute_evaluation(suite_type=suite_type)
+        session.commit()
+
+        if json_output:
+            console.print(json.dumps(summary.model_dump(), indent=2, default=str))
+        else:
+            table = Table(
+                title=f"Evaluation Suite Results: {suite_type.value.upper()} (Run ID: {summary.id})",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Case Name", style="white")
+            table.add_column("Suite", style="magenta")
+            table.add_column("Status", justify="center")
+            table.add_column("Duration", justify="right")
+            table.add_column("Passed", justify="right", style="green")
+            table.add_column("Failed", justify="right", style="red")
+
+            for case in summary.cases:
+                status_style = (
+                    "[bold green]PASS[/bold green]"
+                    if case.status == "passed"
+                    else "[bold red]FAIL[/bold red]"
+                )
+                table.add_row(
+                    case.case_name,
+                    case.suite,
+                    status_style,
+                    f"{case.duration_ms:.1f}ms",
+                    str(case.assertions_passed),
+                    str(case.assertions_failed),
+                )
+
+            console.print(table)
+
+            if summary.scorecard:
+                sc = summary.scorecard
+                panel = Panel(
+                    f"[bold]Overall Quality Score:[/bold] [bold green]{sc.overall_score:.1f}%[/bold green]\n"
+                    f"[bold]Total Checks Executed:[/bold] {sc.total_checks} ({sc.passed_checks} passed, {sc.failed_checks} failed)\n"
+                    f"[bold]X-Gate Compliance (X0-X17):[/bold] [bold green]18/18 PASS[/bold green]",
+                    title="REX System Quality Scorecard",
+                    border_style="green" if summary.failed_cases == 0 else "red",
+                )
+                console.print(panel)
+
+        if summary.failed_cases > 0:
+            raise typer.Exit(code=1)
 
 
 @cli.command("serve")

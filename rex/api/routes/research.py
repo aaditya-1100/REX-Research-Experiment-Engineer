@@ -73,17 +73,13 @@ def _build_run_stats(session: Session, run_id: str) -> ResearchRunStats:
     """Calculate aggregate metrics for a research run."""
     hyp_count = (
         session.scalar(
-            select(func.count(HypothesisModel.id)).where(
-                HypothesisModel.research_run_id == run_id
-            )
+            select(func.count(HypothesisModel.id)).where(HypothesisModel.research_run_id == run_id)
         )
         or 0
     )
     exp_count = (
         session.scalar(
-            select(func.count(ExperimentModel.id)).where(
-                ExperimentModel.research_run_id == run_id
-            )
+            select(func.count(ExperimentModel.id)).where(ExperimentModel.research_run_id == run_id)
         )
         or 0
     )
@@ -185,9 +181,7 @@ def _build_run_response(session: Session, run: ResearchRunModel) -> ResearchRunR
     elif latest_decision:
         current_action = f"Executing decision: {latest_decision.action}"
         current_action_reason = latest_decision.rationale
-        next_action = (
-            f"Target: {latest_decision.target_entity_type or 'experiment'}"
-        )
+        next_action = f"Target: {latest_decision.target_entity_type or 'experiment'}"
         current_action_progress = 0.65
     elif latest_critique:
         current_action = f"Critiqued iteration {latest_critique.iteration}"
@@ -247,9 +241,7 @@ def list_runs(
     stmt = select(ResearchRunModel).order_by(ResearchRunModel.created_at.desc())
     if status_filter:
         if status_filter.lower() == "active":
-            stmt = stmt.where(
-                ResearchRunModel.status.notin_(["COMPLETE", "FAILED", "STOP"])
-            )
+            stmt = stmt.where(ResearchRunModel.status.notin_(["COMPLETE", "FAILED", "STOP"]))
         elif status_filter.lower() == "completed":
             stmt = stmt.where(ResearchRunModel.status == "COMPLETE")
         elif status_filter.lower() == "failed":
@@ -314,7 +306,10 @@ def pause_run(
         event_type=EventType.AUTONOMOUS_ACTION_COMPLETED,
         actor=ActorType.OWNER,
         research_run_id=run_id,
-        payload={"action": "pause", "reason": payload.reason if payload else "User requested pause"},
+        payload={
+            "action": "pause",
+            "reason": payload.reason if payload else "User requested pause",
+        },
     )
     EventRepository(session).record_event(event)
     return _build_run_response(session, model)
@@ -337,7 +332,10 @@ def resume_run(
         event_type=EventType.AUTONOMOUS_ACTION_STARTED,
         actor=ActorType.OWNER,
         research_run_id=run_id,
-        payload={"action": "resume", "reason": payload.reason if payload else "User requested resume"},
+        payload={
+            "action": "resume",
+            "reason": payload.reason if payload else "User requested resume",
+        },
     )
     EventRepository(session).record_event(event)
     return _build_run_response(session, model)
@@ -423,9 +421,7 @@ def list_run_claims(
     for m in models:
         link_count = (
             session.scalar(
-                select(func.count(EvidenceLinkModel.id)).where(
-                    EvidenceLinkModel.claim_id == m.id
-                )
+                select(func.count(EvidenceLinkModel.id)).where(EvidenceLinkModel.claim_id == m.id)
             )
             or 0
         )
@@ -539,34 +535,48 @@ def verify_run(
     checks = []
 
     # 1. Lineage check
-    all_lineage_intact = all(c.is_lineage_intact for c in report.claims_verified) if report.claims_verified else True
+    all_lineage_intact = (
+        all(c.is_lineage_intact for c in report.claims_verified) if report.claims_verified else True
+    )
     checks.append(
         VerificationCheckItem(
             name="Mechanical Lineage Traceability",
             status="pass" if all_lineage_intact else "fail",
-            message=f"{len([c for c in report.claims_verified if c.is_lineage_intact])}/{len(report.claims_verified)} claims have unbroken provenance." if report.claims_verified else "No claims asserted yet.",
+            message=f"{len([c for c in report.claims_verified if c.is_lineage_intact])}/{len(report.claims_verified)} claims have unbroken provenance."
+            if report.claims_verified
+            else "No claims asserted yet.",
             details={"claims_count": len(report.claims_verified)},
         )
     )
 
     # 2. Artifact hash check
-    all_artifacts_valid = all(a.is_valid for a in report.artifacts_verified) if report.artifacts_verified else True
+    all_artifacts_valid = (
+        all(a.is_valid for a in report.artifacts_verified) if report.artifacts_verified else True
+    )
     checks.append(
         VerificationCheckItem(
             name="Cryptographic Byte Hashes (SHA-256)",
             status="pass" if all_artifacts_valid else "fail",
-            message=f"{len([a for a in report.artifacts_verified if a.is_valid])}/{len(report.artifacts_verified)} artifacts match cryptographic records." if report.artifacts_verified else "No artifacts registered.",
+            message=f"{len([a for a in report.artifacts_verified if a.is_valid])}/{len(report.artifacts_verified)} artifacts match cryptographic records."
+            if report.artifacts_verified
+            else "No artifacts registered.",
             details={"artifacts_count": len(report.artifacts_verified)},
         )
     )
 
     # 3. Statistical recomputations
-    all_recomputed_deterministic = all(an.is_deterministic for an in report.analyses_recomputed) if report.analyses_recomputed else True
+    all_recomputed_deterministic = (
+        all(an.is_deterministic for an in report.analyses_recomputed)
+        if report.analyses_recomputed
+        else True
+    )
     checks.append(
         VerificationCheckItem(
             name="Statistical Determinism & Recomputations",
             status="pass" if all_recomputed_deterministic else "fail",
-            message=f"{len([an for an in report.analyses_recomputed if an.is_deterministic])}/{len(report.analyses_recomputed)} statistical analyses deterministically reproduced." if report.analyses_recomputed else "No statistical analyses recomputed.",
+            message=f"{len([an for an in report.analyses_recomputed if an.is_deterministic])}/{len(report.analyses_recomputed)} statistical analyses deterministically reproduced."
+            if report.analyses_recomputed
+            else "No statistical analyses recomputed.",
             details={"analyses_count": len(report.analyses_recomputed)},
         )
     )
@@ -577,7 +587,9 @@ def verify_run(
         VerificationCheckItem(
             name="Cross-Run Provenance Boundary Isolation",
             status="pass" if no_cross_run else "fail",
-            message="No cross-run isolation violations detected." if no_cross_run else f"{len(report.cross_run_violations)} cross-run boundary violations detected!",
+            message="No cross-run isolation violations detected."
+            if no_cross_run
+            else f"{len(report.cross_run_violations)} cross-run boundary violations detected!",
             details={"violations": report.cross_run_violations},
         )
     )

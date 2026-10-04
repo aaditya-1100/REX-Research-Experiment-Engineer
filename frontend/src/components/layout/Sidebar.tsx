@@ -7,6 +7,7 @@ import {
   FileCheck,
   FileText,
   Archive,
+  ShieldCheck,
   Settings,
   Activity,
 } from "lucide-react";
@@ -29,6 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { to: "/evidence", label: "Evidence", icon: <FileCheck className="w-4 h-4" /> },
     { to: "/reports", label: "Reports", icon: <FileText className="w-4 h-4" /> },
     { to: "/artifacts", label: "Artifacts", icon: <Archive className="w-4 h-4" /> },
+    { to: "/evaluation", label: "Quality Center", icon: <ShieldCheck className="w-4 h-4" /> },
     { to: "/settings", label: "Settings", icon: <Settings className="w-4 h-4" /> },
   ];
 

@@ -14,6 +14,7 @@ import { VerificationPage } from "./pages/VerificationPage";
 import { ReportListPage } from "./pages/ReportListPage";
 import { ReportDetailPage } from "./pages/ReportDetailPage";
 import { ArtifactListPage } from "./pages/ArtifactListPage";
+import { EvaluationPage } from "./pages/EvaluationPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
@@ -49,7 +50,10 @@ export const App: React.FC = () => {
             <Route path="artifacts" element={<ArtifactListPage />} />
             <Route path="artifacts/:artifactId" element={<ArtifactListPage />} />
 
-            {/* 7. Settings */}
+            {/* 7. Quality & Evaluation Center */}
+            <Route path="evaluation" element={<EvaluationPage />} />
+
+            {/* 8. Settings */}
             <Route path="settings" element={<SettingsPage />} />
 
             {/* 404 Fallback */}

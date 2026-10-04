@@ -101,7 +101,9 @@ def verify_artifact(
         "actual_hash": result.computed_hash,
         "exists_on_disk": result.file_exists,
         "is_valid": result.is_valid,
-        "status": "verified" if result.is_valid else ("missing" if not result.file_exists else "tampered"),
+        "status": "verified"
+        if result.is_valid
+        else ("missing" if not result.file_exists else "tampered"),
     }
 
 
@@ -121,10 +123,15 @@ def get_artifact_content(
         p = artifact_root / p
 
     if not p.exists():
-        raise HTTPException(status_code=404, detail=f"Artifact file '{model.path}' not found on disk.")
+        raise HTTPException(
+            status_code=404, detail=f"Artifact file '{model.path}' not found on disk."
+        )
 
     # If small text or json, return inline
-    if model.artifact_type in ["log", "stdout", "stderr", "code", "manifest"] and model.size_bytes < 5 * 1024 * 1024:
+    if (
+        model.artifact_type in ["log", "stdout", "stderr", "code", "manifest"]
+        and model.size_bytes < 5 * 1024 * 1024
+    ):
         try:
             content = p.read_text(encoding="utf-8", errors="replace")
             return PlainTextResponse(content)

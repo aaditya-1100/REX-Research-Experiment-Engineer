@@ -45,6 +45,10 @@ class VerificationStatus(StrEnum):
     WARNING = "warning"
     FAIL = "fail"
 
+    # Backwards-compatible aliases
+    VERIFIED = PASS
+    FAILED = FAIL
+
 
 @dataclass(frozen=True)
 class ClaimVerificationResult:
@@ -162,7 +166,25 @@ class ResearchVerifier:
         artifacts_checked: list[HashVerificationResult] = []
         analyses_checked: list[AnalysisRecomputationResult] = []
 
-        # Step 1: Emit VERIFICATION_STARTED / RUN_VERIFICATION_STARTED event
+        # Step 1: Verify research run exists before emitting run-scoped events
+        run = self.session.get(ResearchRunModel, research_run_id)
+        if run is None:
+            errors.append(f"Research run '{research_run_id}' not found.")
+            completed_at = datetime.now(UTC)
+            return VerificationReport(
+                research_run_id=research_run_id,
+                status=VerificationStatus.FAIL,
+                claims_verified=[],
+                artifacts_verified=[],
+                analyses_recomputed=[],
+                cross_run_violations=[],
+                errors=errors,
+                warnings=[],
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+
+        # Step 2: Emit VERIFICATION_STARTED / RUN_VERIFICATION_STARTED event
         start_payload = {"verifier": "ResearchVerifier", "started_at": started_at.isoformat()}
         self.event_sink.emit(
             create_event(
@@ -180,26 +202,6 @@ class ResearchVerifier:
                 payload=start_payload,
             )
         )
-
-        # Step 2: Verify research run exists
-        run = self.session.get(ResearchRunModel, research_run_id)
-        if run is None:
-            errors.append(f"Research run '{research_run_id}' not found.")
-            completed_at = datetime.now(UTC)
-            fail_report = VerificationReport(
-                research_run_id=research_run_id,
-                status=VerificationStatus.FAIL,
-                claims_verified=[],
-                artifacts_verified=[],
-                analyses_recomputed=[],
-                cross_run_violations=[],
-                errors=errors,
-                warnings=[],
-                started_at=started_at,
-                completed_at=completed_at,
-            )
-            self._emit_completion_event(fail_report, actor_enum)
-            return fail_report
 
         # Step 3: Check cross-run evidence links
         all_links = (
@@ -382,6 +384,9 @@ class ResearchVerifier:
 
         return report
 
+    # Backwards-compatible alias for verification
+    verify = verify_run
+
     def _verify_analysis_deterministic(
         self,
         analysis: AnalysisModel,
@@ -478,6 +483,34 @@ class ResearchVerifier:
                                         f"recomputed {rec_val} (diff: {diff:.6e} > tol {self.tolerance})"
                                     ),
                                 )
+
+            elif method in ("model_evaluation", "evaluation"):
+                for r in results:
+                    if (
+                        r.metric_name
+                        and r.metric_value is not None
+                        and r.metric_name in output_json
+                        and isinstance(output_json[r.metric_name], (int, float))
+                    ):
+                        exp_val = output_json[r.metric_name]
+                        rec_val = r.metric_value
+                        diff = abs(float(exp_val) - float(rec_val))
+                        max_diff = max(max_diff, diff)
+                        tol_bound = max(
+                            self.tolerance * max(abs(float(exp_val)), abs(float(rec_val))),
+                            self.tolerance,
+                        )
+                        if diff > tol_bound:
+                            return AnalysisRecomputationResult(
+                                analysis_id=analysis.id,
+                                method=method,
+                                is_deterministic=False,
+                                max_difference=diff,
+                                error_message=(
+                                    f"Result '{r.id}' metric '{r.metric_name}' value {rec_val} "
+                                    f"contradicts analysis output {exp_val} (diff: {diff:.6e} > tol {self.tolerance})"
+                                ),
+                            )
         except (ValueError, TypeError, ZeroDivisionError, KeyError, AttributeError) as exc:
             return AnalysisRecomputationResult(
                 analysis_id=analysis.id,
@@ -506,10 +539,15 @@ class ResearchVerifier:
         asserted_vals: list[float] = []
 
         # 1. Structured metadata values
+        metric_name = meta.get("metric_name")
+        asserted_metric_val: float | None = None
         for key in ("asserted_value", "metric_value", "expected_value", "value"):
             if key in meta and meta[key] is not None:
                 try:
-                    asserted_vals.append(float(meta[key]))
+                    val = float(meta[key])
+                    asserted_vals.append(val)
+                    if asserted_metric_val is None:
+                        asserted_metric_val = val
                 except (ValueError, TypeError):
                     pass
 
@@ -527,7 +565,86 @@ class ResearchVerifier:
         if not asserted_vals:
             return None
 
-        # 3. Collect empirical evidence numbers from analyses and results
+        # 3. Check structured metric assertions against linked results
+        if metric_name and asserted_metric_val is not None:
+            norm_name = str(metric_name).strip().lower()
+            for res in lineage.results:
+                if (
+                    res.metric_name
+                    and res.metric_name.strip().lower() == norm_name
+                    and res.metric_value is not None
+                ):
+                    val = float(res.metric_value)
+                    tol_bound = max(
+                        self.tolerance * max(abs(asserted_metric_val), abs(val)), self.tolerance
+                    )
+                    if abs(asserted_metric_val - val) > tol_bound:
+                        return (
+                            f"CLAIM_NUMBER_MISMATCH: Claim '{claim.id}' asserts metric '{metric_name}' of {asserted_metric_val}, "
+                            f"but linked result '{res.id}' has metric_value {val} (diff: {abs(asserted_metric_val - val):.6e} > tol {self.tolerance})."
+                        )
+
+        # 4. Check internal consistency between results and analyses supporting this claim
+        for res in lineage.results:
+            if res.metric_name and res.metric_value is not None:
+                res_val = float(res.metric_value)
+                for an in lineage.analyses:
+                    out_json = dict(an.output_json or {})
+                    if res.metric_name in out_json and isinstance(
+                        out_json[res.metric_name], (int, float)
+                    ):
+                        an_val = float(out_json[res.metric_name])
+                        diff = abs(res_val - an_val)
+                        tol = max(self.tolerance * max(abs(res_val), abs(an_val)), self.tolerance)
+                        if diff > tol:
+                            return (
+                                f"CLAIM_NUMBER_MISMATCH: Inconsistent evidence for metric '{res.metric_name}': "
+                                f"linked result '{res.id}' has {res_val} while analysis '{an.id}' reports {an_val} "
+                                f"(diff: {diff:.6e} > tol {self.tolerance})."
+                            )
+
+        # 5. Check if statement explicitly mentions a linked result's metric name
+        stmt_lower = claim.statement.lower()
+        metric_names = {
+            res.metric_name.strip().lower() for res in lineage.results if res.metric_name
+        }
+        for m_name in metric_names:
+            pat = rf"\b{re.escape(m_name)}\b(?:\s+is|\s+of|[:=])?\s*([+-]?\d+(?:\.\d+)?)"
+            m = re.search(pat, stmt_lower)
+            if m:
+                try:
+                    stated_val = float(m.group(1))
+                    matches_result = any(
+                        res.metric_name
+                        and res.metric_name.strip().lower() == m_name
+                        and res.metric_value is not None
+                        and abs(float(res.metric_value) - stated_val)
+                        <= max(
+                            self.tolerance * max(abs(float(res.metric_value)), abs(stated_val)),
+                            self.tolerance,
+                        )
+                        for res in lineage.results
+                    )
+                    matches_analysis = any(
+                        isinstance(v, (int, float))
+                        and not isinstance(v, bool)
+                        and abs(float(v) - stated_val)
+                        <= max(
+                            self.tolerance * max(abs(float(v)), abs(stated_val)),
+                            self.tolerance,
+                        )
+                        for an in lineage.analyses
+                        for v in dict(an.output_json or {}).values()
+                    )
+                    if not matches_result and not matches_analysis:
+                        return (
+                            f"CLAIM_NUMBER_MISMATCH: Claim '{claim.id}' states {m_name}={stated_val}, "
+                            f"but no linked result or analysis provides this value within tolerance."
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+        # 6. Collect empirical evidence numbers from analyses and results
         evidence_numbers: list[float] = []
         for an in lineage.analyses:
             out_json = dict(an.output_json or {})
@@ -632,3 +749,7 @@ class ResearchVerifier:
                     payload=payload,
                 )
             )
+
+
+# Alias for REX architectural consistency
+DeterministicVerifier = ResearchVerifier

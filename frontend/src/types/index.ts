@@ -267,3 +267,77 @@ export interface AuditEvent {
   execution_id?: string | null;
   payload: Record<string, any>;
 }
+
+// ----------------------------------------------------------------------------
+// Quality & Evaluation Types (Batch 9 / Epic 11: REX-042 - REX-045)
+// ----------------------------------------------------------------------------
+
+export interface SuiteInfo {
+  id: string;
+  name: string;
+  description: string;
+  ticket: string;
+  cases_count: number;
+}
+
+export interface EvaluationCase {
+  id: string;
+  suite: string;
+  case_name: string;
+  status: "passed" | "failed" | "skipped" | "error";
+  duration_ms: number;
+  assertions_passed: number;
+  assertions_failed: number;
+  failure_reason?: string | null;
+  failure_classification?: string | null;
+  details?: Record<string, any>;
+}
+
+export interface EvaluationComparison {
+  id: string;
+  evaluation_run_id?: string;
+  comparison_name: string;
+  baseline_metrics: Record<string, number>;
+  rex_metrics: Record<string, number>;
+  delta_metrics: Record<string, number>;
+  statistical_summary?: {
+    summary?: string;
+    cost?: Record<string, any>;
+  };
+  created_at?: string | null;
+}
+
+export interface QualityScorecard {
+  overall_score: number;
+  total_checks: number;
+  passed_checks: number;
+  failed_checks: number;
+  gate_compliance: Record<string, string>;
+  domain_scores: Record<string, number>;
+  timestamp: string;
+}
+
+export interface GateComplianceResponse {
+  gates: Record<string, string>;
+  overall_compliance_pct: number;
+  total_gates: number;
+  passed_gates: number;
+  verified_at: string;
+}
+
+export interface EvaluationRun {
+  id: string;
+  suite_name: string;
+  status: "pending" | "running" | "completed" | "passed" | "failed" | "error";
+  started_at: string | null;
+  completed_at: string | null;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  score: number;
+  scorecard?: QualityScorecard | null;
+  summary?: Record<string, any> | null;
+  cases?: EvaluationCase[];
+  comparisons?: EvaluationComparison[];
+}
+

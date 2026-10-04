@@ -19,6 +19,9 @@ from rex.persistence.models import (
     ClaimModel,
     CritiqueModel,
     DecisionModel,
+    EvaluationCaseModel,
+    EvaluationComparisonModel,
+    EvaluationRunModel,
     EventModel,
     EvidenceLinkModel,
     ExecutionModel,
@@ -651,3 +654,81 @@ class DecisionRepository:
             .limit(1)
         )
         return self.session.scalars(stmt).first()
+
+
+class EvaluationRepository(BaseRepository):
+    """Repository for managing quality and validation evaluation records (REX Epic 11)."""
+
+    def create_run(self, run: EvaluationRunModel) -> EvaluationRunModel:
+        self.session.add(run)
+        self.session.flush()
+        return run
+
+    def get_run(self, run_id: str) -> EvaluationRunModel | None:
+        return self.session.get(EvaluationRunModel, run_id)
+
+    def list_runs(self, limit: int = 100, offset: int = 0) -> Sequence[EvaluationRunModel]:
+        stmt = (
+            select(EvaluationRunModel)
+            .order_by(EvaluationRunModel.started_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return self.session.scalars(stmt).all()
+
+    def update_run_status(
+        self,
+        run_id: str,
+        status: str,
+        total_cases: int,
+        passed_cases: int,
+        failed_cases: int,
+        score: float,
+        summary_json: dict[str, Any],
+        completed_at: datetime | None = None,
+    ) -> EvaluationRunModel | None:
+        run = self.get_run(run_id)
+        if not run:
+            return None
+        run.status = status
+        run.total_cases = total_cases
+        run.passed_cases = passed_cases
+        run.failed_cases = failed_cases
+        run.score = score
+        run.summary_json = summary_json
+        run.completed_at = completed_at or datetime.now(UTC)
+        self.session.flush()
+        return run
+
+    def add_case(self, case: EvaluationCaseModel) -> EvaluationCaseModel:
+        self.session.add(case)
+        self.session.flush()
+        return case
+
+    def list_cases(self, run_id: str) -> Sequence[EvaluationCaseModel]:
+        stmt = (
+            select(EvaluationCaseModel)
+            .where(EvaluationCaseModel.evaluation_run_id == run_id)
+            .order_by(EvaluationCaseModel.case_name.asc())
+        )
+        return self.session.scalars(stmt).all()
+
+    def add_comparison(self, comp: EvaluationComparisonModel) -> EvaluationComparisonModel:
+        self.session.add(comp)
+        self.session.flush()
+        return comp
+
+    def list_comparisons(self, run_id: str | None = None) -> Sequence[EvaluationComparisonModel]:
+        stmt = select(EvaluationComparisonModel)
+        if run_id:
+            stmt = stmt.where(EvaluationComparisonModel.evaluation_run_id == run_id)
+        return self.session.scalars(stmt).all()
+
+    def get_latest_run(self, suite_name: str | None = None) -> EvaluationRunModel | None:
+        stmt = select(EvaluationRunModel).order_by(EvaluationRunModel.started_at.desc())
+        if suite_name:
+            stmt = stmt.where(EvaluationRunModel.suite_name == suite_name)
+        return self.session.scalars(stmt).first()
+
+    get_cases_for_run = list_cases
+    get_comparisons_for_run = list_comparisons

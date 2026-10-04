@@ -477,3 +477,86 @@ class EventModel(Base):
     research_run: Mapped["ResearchRunModel"] = relationship(
         "ResearchRunModel", back_populates="events"
     )
+
+
+class EvaluationRunModel(Base):
+    """Top-level record of an executed evaluation suite or quality assessment."""
+
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    suite_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    passed_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Relationships
+    cases: Mapped[list["EvaluationCaseModel"]] = relationship(
+        "EvaluationCaseModel", back_populates="evaluation_run", cascade="all, delete-orphan"
+    )
+    comparisons: Mapped[list["EvaluationComparisonModel"]] = relationship(
+        "EvaluationComparisonModel", back_populates="evaluation_run", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationCaseModel(Base):
+    """Detailed record of an individual evaluation test case within a run."""
+
+    __tablename__ = "evaluation_cases"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evaluation_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    suite: Mapped[str] = mapped_column(String(64), nullable=False)
+    case_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)  # passed, failed, skipped
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    assertions_passed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    assertions_failed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_classification: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    # Relationships
+    evaluation_run: Mapped["EvaluationRunModel"] = relationship(
+        "EvaluationRunModel", back_populates="cases"
+    )
+
+
+class EvaluationComparisonModel(Base):
+    """Comparative evaluation record (REX vs Baseline) for REX-045."""
+
+    __tablename__ = "evaluation_comparisons"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evaluation_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    comparison_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    baseline_metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    rex_metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    delta_metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    statistical_summary_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    # Relationships
+    evaluation_run: Mapped["EvaluationRunModel"] = relationship(
+        "EvaluationRunModel", back_populates="comparisons"
+    )

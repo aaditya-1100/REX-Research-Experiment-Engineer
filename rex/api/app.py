@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from rex.api.routes import (
     artifacts,
+    evaluation,
     evidence,
     executions,
     experiments,
@@ -49,7 +50,7 @@ def create_app(
     app = FastAPI(
         title="REX — Research Experiment Engineer",
         description="Autonomous computational research with machine-readable provenance and independent verification",
-        version="0.8.0",
+        version="0.9.0",
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -85,6 +86,7 @@ def create_app(
     app.include_router(reports.router, prefix="/api")
     app.include_router(artifacts.router, prefix="/api")
     app.include_router(settings.router, prefix="/api")
+    app.include_router(evaluation.router, prefix="/api")
 
     # Static file serving if frontend/dist exists
     frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

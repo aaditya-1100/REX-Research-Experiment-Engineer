@@ -41,7 +41,14 @@ def create_db_engine(database_url: str | None = None, echo: bool = False) -> Eng
         db_path = Path(db_path_str)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(url, echo=echo, future=True)
+    engine_kwargs: dict[str, Any] = {"echo": echo, "future": True}
+    if ":memory:" in url:
+        from sqlalchemy.pool import StaticPool
+
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+        engine_kwargs["poolclass"] = StaticPool
+
+    engine = create_engine(url, **engine_kwargs)
 
     # Attach SQLite PRAGMA listener if SQLite dialect
     if engine.dialect.name == "sqlite":

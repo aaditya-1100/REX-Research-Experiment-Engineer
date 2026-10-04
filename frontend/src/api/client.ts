@@ -10,12 +10,18 @@ import {
   AuditEvent,
   Claim,
   ClaimLineage,
+  EvaluationCase,
+  EvaluationComparison,
+  EvaluationRun,
   Execution,
   Experiment,
   ExperimentComparison,
+  GateComplianceResponse,
   Hypothesis,
+  QualityScorecard,
   ResearchReport,
   ResearchRun,
+  SuiteInfo,
   SystemSettings,
   SystemStatus,
   VerificationReport,
@@ -137,6 +143,20 @@ export const api = {
   getArtifact: (artifactId: string) => request<Artifact>(`/artifacts/${artifactId}`),
   verifyArtifact: (artifactId: string) => request<any>(`/artifacts/${artifactId}/verify`),
   getArtifactContentUrl: (artifactId: string) => `${BASE_URL}/artifacts/${artifactId}/content`,
+
+  // Evaluation & Quality Center (REX Epic 11)
+  listEvaluationSuites: () => request<SuiteInfo[]>("/evaluation/suites"),
+  listEvaluationRuns: (limit = 50, offset = 0) =>
+    request<EvaluationRun[]>(`/evaluation/runs?limit=${limit}&offset=${offset}`),
+  getEvaluationRun: (runId: string) => request<EvaluationRun>(`/evaluation/runs/${runId}`),
+  triggerEvaluation: (suite: string) =>
+    request<EvaluationRun>("/evaluation/runs", {
+      method: "POST",
+      body: JSON.stringify({ suite }),
+    }),
+  getQualityScorecard: () => request<QualityScorecard>("/evaluation/scorecard"),
+  getGateCompliance: () => request<GateComplianceResponse>("/evaluation/gates"),
+  getEvaluationComparisons: () => request<EvaluationComparison[]>("/evaluation/comparisons"),
 
   // SSE Event Stream
   subscribeRunEvents: (runId: string, onEvent: (event: AuditEvent) => void, onError?: (err: any) => void) => {

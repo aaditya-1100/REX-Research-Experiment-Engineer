@@ -52,9 +52,7 @@ def list_claims(
     for m in models:
         link_count = (
             session.scalar(
-                select(func.count(EvidenceLinkModel.id)).where(
-                    EvidenceLinkModel.claim_id == m.id
-                )
+                select(func.count(EvidenceLinkModel.id)).where(EvidenceLinkModel.claim_id == m.id)
             )
             or 0
         )
@@ -88,9 +86,7 @@ def get_claim(
 
     link_count = (
         session.scalar(
-            select(func.count(EvidenceLinkModel.id)).where(
-                EvidenceLinkModel.claim_id == model.id
-            )
+            select(func.count(EvidenceLinkModel.id)).where(EvidenceLinkModel.claim_id == model.id)
         )
         or 0
     )
@@ -138,7 +134,9 @@ def get_claim_lineage(
             type="claim",
             label=f"Claim: {claim.id}",
             sublabel=claim.statement[:70] + ("..." if len(claim.statement) > 70 else ""),
-            status="verified" if claim_status == "verified" else ("unsupported" if claim_status in ["unsupported", "tampered"] else "unverified"),
+            status="verified"
+            if claim_status == "verified"
+            else ("unsupported" if claim_status in ["unsupported", "tampered"] else "unverified"),
             hash=None,
             details={
                 "claim_type": claim.claim_type,
@@ -172,7 +170,9 @@ def get_claim_lineage(
                     )
                 )
                 seen_nodes.add(an_id)
-            edges.append(LineageEdge(source_id=prev_node_id, target_id=an_id, relation="derived_from"))
+            edges.append(
+                LineageEdge(source_id=prev_node_id, target_id=an_id, relation="derived_from")
+            )
             prev_node_id = an_id
 
     # 3. Results
@@ -198,7 +198,9 @@ def get_claim_lineage(
                     )
                 )
                 seen_nodes.add(res_id)
-            edges.append(LineageEdge(source_id=prev_node_id, target_id=res_id, relation="supported_by"))
+            edges.append(
+                LineageEdge(source_id=prev_node_id, target_id=res_id, relation="supported_by")
+            )
             prev_node_id = res_id
 
     # 4. Executions
@@ -223,7 +225,9 @@ def get_claim_lineage(
                     )
                 )
                 seen_nodes.add(ex_id)
-            edges.append(LineageEdge(source_id=prev_node_id, target_id=ex_id, relation="produced_by"))
+            edges.append(
+                LineageEdge(source_id=prev_node_id, target_id=ex_id, relation="produced_by")
+            )
             prev_node_id = ex_id
 
             # Add Code, Dataset, Configuration sub-nodes attached to execution
@@ -259,7 +263,9 @@ def get_claim_lineage(
                         )
                     )
                     seen_nodes.add(data_id)
-                edges.append(LineageEdge(source_id=ex_id, target_id=data_id, relation="uses_dataset"))
+                edges.append(
+                    LineageEdge(source_id=ex_id, target_id=data_id, relation="uses_dataset")
+                )
 
             if ex.configuration_hash:
                 cfg_id = f"config_{ex.id}"
@@ -276,7 +282,9 @@ def get_claim_lineage(
                         )
                     )
                     seen_nodes.add(cfg_id)
-                edges.append(LineageEdge(source_id=ex_id, target_id=cfg_id, relation="uses_configuration"))
+                edges.append(
+                    LineageEdge(source_id=ex_id, target_id=cfg_id, relation="uses_configuration")
+                )
 
     # 5. Experiments
     if lineage.experiments:
@@ -294,7 +302,9 @@ def get_claim_lineage(
                     )
                 )
                 seen_nodes.add(exp_id)
-            edges.append(LineageEdge(source_id=prev_node_id, target_id=exp_id, relation="instance_of"))
+            edges.append(
+                LineageEdge(source_id=prev_node_id, target_id=exp_id, relation="instance_of")
+            )
 
     # 6. Artifacts
     if lineage.artifacts:
@@ -318,7 +328,9 @@ def get_claim_lineage(
                     )
                 )
                 seen_nodes.add(art_id)
-            edges.append(LineageEdge(source_id=prev_node_id, target_id=art_id, relation="uses_artifact"))
+            edges.append(
+                LineageEdge(source_id=prev_node_id, target_id=art_id, relation="uses_artifact")
+            )
 
     return ClaimLineageResponse(
         claim_id=claim.id,

@@ -212,7 +212,9 @@ class ExperimentComparisonMetric(BaseSchema):
 class CompareExperimentsRequest(BaseSchema):
     """Request payload to compare multiple experiments."""
 
-    experiment_ids: list[str] = Field(..., min_length=1, description="List of experiment IDs to compare")
+    experiment_ids: list[str] = Field(
+        ..., min_length=1, description="List of experiment IDs to compare"
+    )
 
 
 class ExperimentComparisonResponse(BaseSchema):

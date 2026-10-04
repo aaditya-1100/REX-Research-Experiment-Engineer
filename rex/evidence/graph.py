@@ -371,6 +371,31 @@ class EvidenceGraphService:
 
         return EvidenceLink.from_persistence(link_model)
 
+    def add_edge(
+        self,
+        source_type: EvidenceNodeType | str,
+        source_id: str,
+        target_type: EvidenceNodeType | str,
+        target_id: str,
+        relationship_type: EvidenceRelationType | str | None = None,
+        relation_type: EvidenceRelationType | str | None = None,
+        research_run_id: str | None = None,
+        created_by: str = "system",
+        metadata: dict[str, Any] | None = None,
+    ) -> EvidenceLink:
+        """Alias for create_link supporting both relationship_type and relation_type."""
+        rel = relationship_type or relation_type or EvidenceRelationType.SUPPORTED_BY
+        return self.create_link(
+            source_type=source_type,
+            source_id=source_id,
+            target_type=target_type,
+            target_id=target_id,
+            relationship_type=rel,
+            research_run_id=research_run_id,
+            created_by=created_by,
+            metadata=metadata,
+        )
+
     def get_links_from(
         self, source_type: EvidenceNodeType | str, source_id: str
     ) -> list[EvidenceLink]:

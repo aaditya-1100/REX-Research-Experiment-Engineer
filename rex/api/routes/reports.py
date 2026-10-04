@@ -37,29 +37,35 @@ def list_reports(
     generator = ReportGenerator()
     for r in runs:
         try:
-            report = generator.generate_report(research_run_id=r.id, session=session, save_artifact=False)
+            report = generator.generate_report(
+                research_run_id=r.id, session=session, save_artifact=False
+            )
             summary_text = f"Investigation: {report.research_question}. Experiments: {report.total_experiments}."
-            results.append({
-                "research_run_id": r.id,
-                "title": report.title or r.title or r.research_question[:60],
-                "generated_at": report.generated_at.isoformat(),
-                "is_fully_grounded": report.is_fully_grounded,
-                "executive_summary": summary_text,
-                "experiments_count": len(report.experiments),
-                "metrics_count": len(report.metrics),
-                "unsupported_claims_count": len(report.unsupported_claims),
-            })
+            results.append(
+                {
+                    "research_run_id": r.id,
+                    "title": report.title or r.title or r.research_question[:60],
+                    "generated_at": report.generated_at.isoformat(),
+                    "is_fully_grounded": report.is_fully_grounded,
+                    "executive_summary": summary_text,
+                    "experiments_count": len(report.experiments),
+                    "metrics_count": len(report.metrics),
+                    "unsupported_claims_count": len(report.unsupported_claims),
+                }
+            )
         except (ValueError, KeyError, RuntimeError, AttributeError):
-            results.append({
-                "research_run_id": r.id,
-                "title": r.title or r.research_question[:60],
-                "generated_at": r.created_at.isoformat(),
-                "is_fully_grounded": False,
-                "executive_summary": "Report preview unavailable.",
-                "experiments_count": 0,
-                "metrics_count": 0,
-                "unsupported_claims_count": 0,
-            })
+            results.append(
+                {
+                    "research_run_id": r.id,
+                    "title": r.title or r.research_question[:60],
+                    "generated_at": r.created_at.isoformat(),
+                    "is_fully_grounded": False,
+                    "executive_summary": "Report preview unavailable.",
+                    "experiments_count": 0,
+                    "metrics_count": 0,
+                    "unsupported_claims_count": 0,
+                }
+            )
     return results
 
 

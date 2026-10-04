@@ -95,7 +95,7 @@ class TestSpaServing:
         client: TestClient = test_env["client"]
         response = client.get("/")
         assert response.status_code == 200
-        assert "<div id=\"root\"></div>" in response.text
+        assert '<div id="root"></div>' in response.text
         assert "REX" in response.text
 
     def test_client_side_routing_serves_index(self, test_env):
@@ -104,7 +104,7 @@ class TestSpaServing:
         for path in ["/research", "/experiments/compare", "/evidence", "/settings"]:
             response = client.get(path)
             assert response.status_code == 200
-            assert "<div id=\"root\"></div>" in response.text
+            assert '<div id="root"></div>' in response.text
 
     def test_api_404_not_hijacked_by_spa(self, test_env):
         """Non-existent API routes must return 404 JSON, not SPA HTML."""
@@ -263,7 +263,9 @@ class TestExperimentComparisonAndReproducibility:
         )
         assert compare_res.status_code == 200
         comp_data = compare_res.json()
-        metrics = {m["metric_name"]: m["values_by_experiment"] for m in comp_data["metrics_summary"]}
+        metrics = {
+            m["metric_name"]: m["values_by_experiment"] for m in comp_data["metrics_summary"]
+        }
         assert "accuracy" in metrics
         assert metrics["accuracy"][exp1_id] == 0.945
         assert metrics["accuracy"][exp2_id] == 0.912
