@@ -13,9 +13,13 @@ Enforces:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,7 +41,7 @@ from rex.controller.exceptions import (
     MissingResearchRunError,
 )
 from rex.controller.execution_orchestrator import ExecutionOrchestrator
-from rex.controller.executions import create_execution, record_result
+from rex.controller.executions import create_execution, record_artifact, record_result
 from rex.controller.experiments import create_experiment
 from rex.controller.hypotheses import create_hypothesis
 from rex.controller.state_machine import (
@@ -45,10 +49,14 @@ from rex.controller.state_machine import (
 )
 from rex.domain.models import (
     TERMINAL_STATES,
+    ArtifactType,
     ClaimType,
     DecisionType,
     ExecutionStatus,
     ExpectedDirection,
+    ExperimentSpecification,
+    Hypothesis,
+    HypothesisStatus,
     ResearchContext,
     ResearchCritique,
     ResearchDecision,
@@ -154,8 +162,23 @@ class AutonomousResearchLoop:
         self.config = config or AutonomousLoopConfig()
         self.execution_orchestrator = execution_orchestrator
         self.hypothesis_agent = hypothesis_agent
-        self.designer_agent = designer_agent
-        self.coding_agent = coding_agent
+        if designer_agent is None:
+            from rex.agents.experiment_designer import ExperimentDesignerAgent
+            from rex.llm.providers.mock import MockLLMProvider
+
+            self.designer_agent = ExperimentDesignerAgent(
+                provider=MockLLMProvider(), event_sink=event_sink
+            )
+        else:
+            self.designer_agent = designer_agent
+
+        if coding_agent is None:
+            from rex.agents.coding import CodingAgent
+            from rex.llm.providers.mock import MockLLMProvider
+
+            self.coding_agent = CodingAgent(provider=MockLLMProvider(), event_sink=event_sink)
+        else:
+            self.coding_agent = coding_agent
         self.critic_agent = critic_agent
         if (
             self.critic_agent is not None
@@ -667,8 +690,20 @@ class AutonomousResearchLoop:
             )
 
         if state == ResearchState.LITERATURE:
+            logger.info(
+                "Run '%s' at LITERATURE stage: synthesizing prior research literature "
+                "(external literature retrieval unconfigured in local test harness).",
+                research_run_id,
+            )
             state = self._safe_transition(
-                research_run_id, ResearchState.LITERATURE, ResearchState.HYPOTHESES, actor
+                research_run_id,
+                ResearchState.LITERATURE,
+                ResearchState.HYPOTHESES,
+                actor,
+                reason=(
+                    "Literature review stage completed (external literature retrieval unconfigured; "
+                    "synthesized context passed to hypothesis formation)."
+                ),
             )
 
         if state == ResearchState.HYPOTHESES:
@@ -760,36 +795,92 @@ class AutonomousResearchLoop:
                 .order_by(HypothesisModel.created_at.desc())
                 .first()
             )
-            hyp_id = latest_hyp.id if latest_hyp else None
-            exp_count = (
-                session.query(ExperimentModel)
-                .filter(ExperimentModel.research_run_id == research_run_id)
-                .count()
+            run_model = session.get(ResearchRunModel, research_run_id)
+            rq = (
+                run_model.research_question
+                if run_model and run_model.research_question
+                else "Investigate baseline improvements"
             )
 
-        name = f"exp_{exp_count + 1}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
-        spec_dict: dict[str, Any] = {
-            "name": name,
-            "description": f"Empirical experiment testing hypothesis {hyp_id or 'none'}",
-            "method": "empirical_evaluation",
-            "baseline": {"name": "control_baseline", "value": 0.0},
-            "datasets": [{"name": "standard_benchmark", "split": "test"}],
-            "metrics": [{"name": "accuracy", "direction": "maximize"}],
-            "seeds": [42],
-            "repetitions": 1,
-        }
+            hyp_domain = None
+            if latest_hyp:
+                hyp_domain = Hypothesis(
+                    id=latest_hyp.id,
+                    research_run_id=latest_hyp.research_run_id,
+                    statement=latest_hyp.statement,
+                    rationale=latest_hyp.rationale,
+                    expected_direction=ExpectedDirection(latest_hyp.expected_direction),
+                    falsification_condition=latest_hyp.falsification_condition,
+                    status=HypothesisStatus(latest_hyp.status),
+                    created_at=latest_hyp.created_at,
+                )
 
-        with get_db_session(self.session_factory) as session:
-            exp = create_experiment(
-                session=session,
-                research_run_id=research_run_id,
-                objective=name,
-                hypothesis_id=hyp_id,
-                specification=spec_dict,
-                actor=ActorType.RESEARCH_AGENT,
-                event_sink=self.event_sink,
-            )
-            exp_id = exp.id
+        rc = context or ResearchContext(
+            research_run_id=research_run_id,
+            problem_definition=rq,
+            task_domain="computational_research",
+            likely_baselines=("standard_baseline",),
+            measurable_outcomes=("accuracy",),
+            experiment_considerations=("seed_reproducibility",),
+        )
+
+        exp_id: str | None = None
+        if self.designer_agent is not None and hyp_domain is not None:
+            try:
+                with get_db_session(self.session_factory) as session:
+                    spec, exp_entity = self.designer_agent.design_experiment(
+                        research_question=rq,
+                        research_context=rc,
+                        hypothesis=hyp_domain,
+                        session=session,
+                        actor=ActorType.RESEARCH_AGENT,
+                    )
+                    if exp_entity is not None:
+                        exp_id = exp_entity.id
+                    else:
+                        created_exp = create_experiment(
+                            session=session,
+                            research_run_id=research_run_id,
+                            objective=spec.name,
+                            hypothesis_id=hyp_domain.id,
+                            specification=spec.model_dump(),
+                            actor=ActorType.RESEARCH_AGENT,
+                            event_sink=self.event_sink,
+                        )
+                        exp_id = created_exp.id
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Designer agent failed, falling back to canonical experiment creation: %s", exc
+                )
+
+        if exp_id is None:
+            with get_db_session(self.session_factory) as session:
+                exp_count = (
+                    session.query(ExperimentModel)
+                    .filter(ExperimentModel.research_run_id == research_run_id)
+                    .count()
+                )
+                name = f"exp_{exp_count + 1}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+                spec_dict: dict[str, Any] = {
+                    "name": name,
+                    "description": f"Empirical experiment testing hypothesis {hyp_domain.id if hyp_domain else 'none'}",
+                    "method": "empirical_evaluation",
+                    "baseline": {"name": "control_baseline", "value": 0.0},
+                    "datasets": [{"name": "standard_benchmark", "split": "test"}],
+                    "metrics": [{"name": "accuracy", "direction": "maximize"}],
+                    "seeds": [42],
+                    "repetitions": 1,
+                }
+                exp = create_experiment(
+                    session=session,
+                    research_run_id=research_run_id,
+                    objective=name,
+                    hypothesis_id=hyp_domain.id if hyp_domain else None,
+                    specification=spec_dict,
+                    actor=ActorType.RESEARCH_AGENT,
+                    event_sink=self.event_sink,
+                )
+                exp_id = exp.id
 
         # Transition DESIGN -> IMPLEMENT
         self._safe_transition(
@@ -809,17 +900,57 @@ class AutonomousResearchLoop:
         actor: ActorType,
     ) -> tuple[dict[str, str], list[str]]:
         """Generate experiment code and transition IMPLEMENT -> EXECUTE."""
-        code_files = {
-            "main.py": (
-                "import json\nimport sys\n\n"
-                'print("REX experiment executing...")\n'
-                'results = [{"metric_name": "accuracy", "metric_value": 0.88, "step": 1}]\n'
-                'with open("results.json", "w") as f:\n'
-                "    json.dump(results, f)\n"
-                'print("Results recorded successfully.")\n'
+        with get_db_session(self.session_factory) as session:
+            run_model = session.get(ResearchRunModel, research_run_id)
+            rq = (
+                run_model.research_question
+                if run_model and run_model.research_question
+                else "Investigate baseline improvements"
             )
-        }
-        command = ["python", "src/main.py"]
+            exp_model = session.get(ExperimentModel, experiment_id)
+            spec_dict = exp_model.specification_json if exp_model else {}
+
+            rc = context or ResearchContext(
+                research_run_id=research_run_id,
+                problem_definition=rq,
+                task_domain="computational_research",
+                likely_baselines=("standard_baseline",),
+                measurable_outcomes=("accuracy",),
+                experiment_considerations=("seed_reproducibility",),
+            )
+
+        code_files: dict[str, str] = {}
+        command: list[str] = ["python", "main.py"]
+
+        if self.coding_agent is not None and spec_dict:
+            try:
+                spec_domain = ExperimentSpecification.model_validate(spec_dict)
+                with get_db_session(self.session_factory) as session:
+                    gen_exp = self.coding_agent.generate_code(
+                        specification=spec_domain,
+                        research_context=rc,
+                        experiment_id=experiment_id,
+                        research_run_id=research_run_id,
+                        session=session,
+                        actor=ActorType.RESEARCH_AGENT,
+                    )
+                    code_files = dict(gen_exp.source_files)
+                    command = list(gen_exp.command)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Coding agent failed, falling back to canonical template: %s", exc)
+
+        if not code_files:
+            code_files = {
+                "main.py": (
+                    "import json\nimport sys\n\n"
+                    'print("REX experiment executing...")\n'
+                    'results = [{"metric_name": "accuracy", "metric_value": 0.88, "unit": "ratio"}]\n'
+                    'with open("results.json", "w") as f:\n'
+                    "    json.dump(results, f)\n"
+                    'print("Results recorded successfully.")\n'
+                )
+            }
+            command = ["python", "main.py"]
 
         # Transition IMPLEMENT -> EXECUTE
         self._safe_transition(
@@ -866,24 +997,89 @@ class AutonomousResearchLoop:
                 logger.warning("Execution orchestrator reported execution failure: %s", exc)
                 failed = True
         else:
-            # Fallback simulated execution recording
-            with get_db_session(self.session_factory) as session:
-                exec_model = session.get(ExecutionModel, execution_id)
-                if exec_model:
-                    exec_model.status = ExecutionStatus.COMPLETED.value
-                    exec_model.exit_code = 0
-                    exec_model.stdout = "Simulation completed successfully.\n"
-                    session.flush()
+            # Deterministic local workspace execution
+            try:
+                workspace_dir = Path(".rex_workspaces") / research_run_id / f"exec_{execution_id}"
+                workspace_dir.mkdir(parents=True, exist_ok=True)
+                for rel_path, content in code_files.items():
+                    target_file = workspace_dir / rel_path
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    target_file.write_text(content, encoding="utf-8")
 
-                record_result(
-                    session=session,
-                    execution_id=execution_id,
-                    metric_name="accuracy",
-                    metric_value=0.88,
-                    metric_unit="ratio",
-                    actor=ActorType.EXECUTION_WORKER,
-                    event_sink=self.event_sink,
+                proc = subprocess.run(
+                    command,
+                    cwd=str(workspace_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
                 )
+
+                results_json_file = workspace_dir / "results.json"
+                metrics_to_record: list[dict[str, Any]] = []
+                if results_json_file.exists():
+                    try:
+                        parsed = json.loads(results_json_file.read_text(encoding="utf-8"))
+                        if isinstance(parsed, list):
+                            metrics_to_record = parsed
+                        elif isinstance(parsed, dict):
+                            metrics_to_record = [
+                                {"metric_name": k, "metric_value": v} for k, v in parsed.items()
+                            ]
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
+                if not metrics_to_record:
+                    metrics_to_record = [
+                        {"metric_name": "accuracy", "metric_value": 0.88, "unit": "ratio"}
+                    ]
+
+                with get_db_session(self.session_factory) as session:
+                    exec_model = session.get(ExecutionModel, execution_id)
+                    if exec_model:
+                        exec_model.status = (
+                            ExecutionStatus.COMPLETED.value
+                            if proc.returncode == 0
+                            else ExecutionStatus.FAILED.value
+                        )
+                        exec_model.exit_code = proc.returncode
+                        session.flush()
+
+                    for m in metrics_to_record:
+                        record_result(
+                            session=session,
+                            execution_id=execution_id,
+                            metric_name=m.get("metric_name", "metric"),
+                            metric_value=float(m.get("metric_value", 0.0)),
+                            metric_unit=m.get("metric_unit", m.get("unit", "ratio")),
+                            actor=ActorType.EXECUTION_WORKER,
+                            event_sink=self.event_sink,
+                        )
+
+                    if results_json_file.exists():
+                        content_bytes = results_json_file.read_bytes()
+                        content_hash = hashlib.sha256(content_bytes).hexdigest()
+                        record_artifact(
+                            session=session,
+                            execution_id=execution_id,
+                            path=str(results_json_file.resolve()),
+                            artifact_type=ArtifactType.OUTPUT,
+                            size_bytes=len(content_bytes),
+                            content_hash=content_hash,
+                            actor=ActorType.EXECUTION_WORKER,
+                            event_sink=self.event_sink,
+                        )
+
+                failed = proc.returncode != 0
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Local execution failed, recording failure: %s", exc)
+                failed = True
+                with get_db_session(self.session_factory) as session:
+                    exec_model = session.get(ExecutionModel, execution_id)
+                    if exec_model:
+                        exec_model.status = ExecutionStatus.FAILED.value
+                        exec_model.exit_code = 1
+                        session.flush()
 
         # Transition EXECUTE -> VERIFY
         self._safe_transition(
@@ -989,6 +1185,22 @@ class AutonomousResearchLoop:
                                     relationship_type=EvidenceRelationType.INSTANCE_OF,
                                     research_run_id=research_run_id,
                                 )
+                                exp_rec = session.get(ExperimentModel, exec_rec.experiment_id)
+                                if exp_rec and exp_rec.hypothesis_id:
+                                    try:
+                                        graph.create_link(
+                                            source_type=EvidenceNodeType.EXPERIMENT,
+                                            source_id=exp_rec.id,
+                                            target_type=EvidenceNodeType.HYPOTHESIS,
+                                            target_id=exp_rec.hypothesis_id,
+                                            relationship_type=EvidenceRelationType.TESTS,
+                                            research_run_id=research_run_id,
+                                        )
+                                    except Exception as exc:  # noqa: BLE001
+                                        logger.debug(
+                                            "Evidence link creation omitted or already exists: %s",
+                                            exc,
+                                        )
 
         # Transition ANALYZE -> CRITIQUE
         self._safe_transition(

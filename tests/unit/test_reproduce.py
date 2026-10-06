@@ -137,6 +137,7 @@ def test_reproduce_experiment_exact_match_preserves_original(
         experiment_id=exp_id,
         original_execution_id=orig_exec_id,
         tolerance=1e-3,
+        allow_mock_fallback=True,
     )
 
     # 1. Assert original execution was NOT overwritten
@@ -160,6 +161,27 @@ def test_reproduce_experiment_exact_match_preserves_original(
     # 4. Check events
     assert len(sink.get_by_type(EventType.REPRODUCTION_STARTED)) == 1
     assert len(sink.get_by_type(EventType.REPRODUCTION_COMPLETED)) == 1
+
+
+@pytest.mark.unit
+def test_reproduce_experiment_without_runner_fails_cleanly(
+    db_session: Session, exp_setup: tuple[str, str, InMemoryEventSink]
+) -> None:
+    """Computational reproduction without a runner or explicit results must fail for epistemic integrity."""
+    exp_id, orig_exec_id, sink = exp_setup
+    reproducer = ExperimentReproducer(session=db_session, event_sink=sink)
+
+    report = reproducer.reproduce_experiment(
+        experiment_id=exp_id,
+        original_execution_id=orig_exec_id,
+        tolerance=1e-3,
+        allow_mock_fallback=False,
+    )
+
+    assert report.is_reproduced is False
+    assert report.outcome == ReproductionOutcome.FAILED
+    assert "Automatic metric mirroring is disabled" in (report.error_message or "")
+    assert len(sink.get_by_type(EventType.REPRODUCTION_FAILED)) == 1
 
 
 @pytest.mark.unit

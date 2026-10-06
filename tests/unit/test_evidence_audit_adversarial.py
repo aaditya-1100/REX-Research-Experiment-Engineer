@@ -593,6 +593,7 @@ def test_reproducibility_classification_and_divergence(
     # 2. Reproduction with identical metrics -> EXACT_MATCH
     rep_report_match = reproducer.reproduce_experiment(
         experiment_id=exp.id,
+        allow_mock_fallback=True,
     )
     assert rep_report_match.is_reproduced is True
     assert rep_report_match.outcome == ReproductionOutcome.EXACT_MATCH

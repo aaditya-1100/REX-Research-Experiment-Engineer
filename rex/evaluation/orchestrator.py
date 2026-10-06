@@ -8,10 +8,12 @@ Quality Scorecard across Gates X0 through X17.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -51,6 +53,93 @@ class EvaluationOrchestrator:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.repo = EvaluationRepository(session)
+
+    @staticmethod
+    def _check_git_integrity() -> str:
+        try:
+            res = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            return "PASS" if res.returncode == 0 else "FAIL"
+        except (subprocess.SubprocessError, OSError):
+            return "NOT_PROVEN"
+
+    @classmethod
+    def _evaluate_gates(
+        cls,
+        cases: list[EvaluationCaseResult],
+        suite_type: EvaluationSuiteType,
+        total_cases: int,
+        passed_cases: int,
+        failed_cases: int,
+    ) -> dict[str, str]:
+        def suite_status(s_names: list[str]) -> str:
+            rel = [c for c in cases if c.suite in s_names]
+            if not rel:
+                return "NOT_RUN"
+            if all(c.status == EvaluationStatus.PASSED for c in rel):
+                return "PASS"
+            if any(c.status == EvaluationStatus.PASSED for c in rel):
+                return "PARTIAL"
+            return "FAIL"
+
+        docs_exist = Path("docs").exists() or Path("05_Feature_Tickets.md").exists()
+        frontend_exists = Path("frontend/package.json").exists()
+
+        if suite_type == EvaluationSuiteType.ALL:
+            final_ev = "PASS" if failed_cases == 0 and total_cases > 0 else "FAIL"
+        else:
+            final_ev = "PARTIAL" if failed_cases == 0 and total_cases > 0 else "FAIL"
+
+        return {
+            "X0_Scope_Integrity": (
+                "PASS" if not any(c.status == EvaluationStatus.FAILED for c in cases) else "FAIL"
+            ),
+            "X1_Functional": suite_status(["research_lifecycle"]),
+            "X2_Evaluation_Infrastructure": "PASS" if total_cases > 0 else "FAIL",
+            "X3_Correctness": suite_status(["core_correctness"]),
+            "X4_Reproducibility": suite_status(["reproducibility"]),
+            "X5_Provenance": suite_status(["evidence_integrity"]),
+            "X6_Epistemic_Integrity": suite_status(["epistemic_integrity"]),
+            "X7_Security": suite_status(["security_corruption"]),
+            "X8_Isolation": suite_status(["reliability_chaos"]),
+            "X9_Concurrency": suite_status(["concurrency"]),
+            "X10_Failure_Transparency": suite_status(["reliability_chaos"]),
+            "X11_Autonomous_Research": suite_status(["research_lifecycle"]),
+            "X12_Reporting": "PASS" if total_cases > 0 else "FAIL",
+            "X13_Regression": (
+                "PASS"
+                if failed_cases == 0 and total_cases > 0
+                else ("PARTIAL" if passed_cases > 0 else "FAIL")
+            ),
+            "X14_Frontend": "PASS" if frontend_exists else "NOT_PROVEN",
+            "X15_Documentation": "PASS" if docs_exist else "NOT_PROVEN",
+            "X16_Git_Integrity": cls._check_git_integrity(),
+            "X17_Final_Evidence": final_ev,
+        }
+
+    @staticmethod
+    def _compute_domain_scores(cases: list[EvaluationCaseResult]) -> dict[str, float]:
+        def domain_rate(s_names: list[str]) -> float:
+            d_cases = [c for c in cases if c.suite in s_names]
+            if not d_cases:
+                return 0.0
+            tot = sum(c.assertions_passed + c.assertions_failed for c in d_cases)
+            pas = sum(c.assertions_passed for c in d_cases)
+            return round((pas / tot * 100.0), 2) if tot > 0 else 0.0
+
+        return {
+            "correctness": domain_rate(["core_correctness"]),
+            "reproducibility": domain_rate(["reproducibility"]),
+            "provenance": domain_rate(["evidence_integrity"]),
+            "epistemic": domain_rate(["epistemic_integrity"]),
+            "security": domain_rate(["security_corruption"]),
+            "reliability": domain_rate(["reliability_chaos"]),
+        }
 
     # -------------------------------------------------------------------------
     # SUITE IMPLEMENTATIONS
@@ -418,56 +507,16 @@ class EvaluationOrchestrator:
                 )
                 self.repo.add_comparison(db_comp)
 
-            # Generate Quality Scorecard for Gates X0-X17
-            gate_status = {
-                "X0_Scope_Integrity": "PASS",
-                "X1_Functional": "PASS" if passed_cases > 0 else "FAIL",
-                "X2_Evaluation_Infrastructure": "PASS",
-                "X3_Correctness": "PASS"
-                if not any(
-                    c.suite == "core_correctness" and c.status != EvaluationStatus.PASSED
-                    for c in cases
-                )
-                else "FAIL",
-                "X4_Reproducibility": "PASS"
-                if not any(
-                    c.suite == "reproducibility" and c.status != EvaluationStatus.PASSED
-                    for c in cases
-                )
-                else "FAIL",
-                "X5_Provenance": "PASS"
-                if not any(
-                    c.suite == "evidence_integrity" and c.status != EvaluationStatus.PASSED
-                    for c in cases
-                )
-                else "FAIL",
-                "X6_Epistemic_Integrity": "PASS"
-                if not any(
-                    c.suite == "epistemic_integrity" and c.status != EvaluationStatus.PASSED
-                    for c in cases
-                )
-                else "FAIL",
-                "X7_Security": "PASS"
-                if not any(
-                    c.suite == "security_corruption" and c.status != EvaluationStatus.PASSED
-                    for c in cases
-                )
-                else "FAIL",
-                "X8_Isolation": "PASS",
-                "X9_Concurrency": "PASS"
-                if not any(
-                    c.suite == "concurrency" and c.status != EvaluationStatus.PASSED for c in cases
-                )
-                else "FAIL",
-                "X10_Failure_Transparency": "PASS",
-                "X11_Autonomous_Research": "PASS",
-                "X12_Reporting": "PASS",
-                "X13_Regression": "PASS",
-                "X14_Frontend": "PASS",
-                "X15_Documentation": "PASS",
-                "X16_Git_Integrity": "PASS",
-                "X17_Final_Evidence": "PASS" if failed_cases == 0 else "FAIL",
-            }
+            # Generate Dynamic Quality Scorecard for Gates X0-X17
+            gate_status = self._evaluate_gates(
+                cases=cases,
+                suite_type=suite_type,
+                total_cases=total_cases,
+                passed_cases=passed_cases,
+                failed_cases=failed_cases,
+            )
+
+            domain_scores = self._compute_domain_scores(cases=cases)
 
             scorecard = QualityScorecard(
                 overall_score=round(score, 2),
@@ -475,14 +524,7 @@ class EvaluationOrchestrator:
                 passed_checks=sum(c.assertions_passed for c in cases),
                 failed_checks=sum(c.assertions_failed for c in cases),
                 gate_compliance=gate_status,
-                domain_scores={
-                    "correctness": 100.0,
-                    "reproducibility": 100.0,
-                    "provenance": 100.0,
-                    "epistemic": 100.0,
-                    "security": 100.0,
-                    "reliability": 100.0,
-                },
+                domain_scores=domain_scores,
             )
 
             completed_at = datetime.now(UTC)

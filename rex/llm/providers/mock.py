@@ -16,6 +16,58 @@ from rex.llm.models import (
     LLMResponse,
 )
 
+DEFAULT_STRUCTURED_ACTIONS: dict[str, dict[str, Any]] = {
+    "experiment_design": {
+        "name": "emp_benchmark_eval",
+        "description": "Empirical evaluation of proposed model against benchmark baseline",
+        "method": "empirical_evaluation",
+        "variables": {"learning_rate": 0.001},
+        "controls": {"epochs": 10},
+        "baseline": {"name": "standard_baseline", "value": 0.50},
+        "datasets": [{"name": "standard_benchmark", "split": "test"}],
+        "metrics": [{"name": "accuracy", "direction": "maximize"}],
+        "parameters": {"batch_size": 32},
+        "seeds": [42],
+        "repetitions": 1,
+        "analysis_methods": ["t_test"],
+        "success_criteria": "accuracy > 0.80",
+        "falsification_criteria": "accuracy <= 0.50",
+    },
+    "code_generation": {
+        "entrypoint": "main.py",
+        "source_files": {
+            "main.py": (
+                "import json\nimport sys\n\n"
+                "print('REX generated experiment running...')\n"
+                "results = [{'metric_name': 'accuracy', 'metric_value': 0.88, 'unit': 'ratio'}]\n"
+                "with open('results.json', 'w') as f:\n"
+                "    json.dump(results, f)\n"
+                "print('Experiment complete.')\n"
+            )
+        },
+        "command": ["python", "main.py"],
+        "dependencies": [],
+        "configuration": {"seed": 42},
+        "expected_metrics": ["accuracy"],
+    },
+    "hypothesis_generation": {
+        "statement": "Increasing model depth improves benchmark accuracy by at least 5%",
+        "rationale": "Empirical depth scaling in literature demonstrates improved representation capacity",
+        "expected_direction": "maximize",
+        "variables_changed": ["depth"],
+        "falsification_condition": "accuracy improvement <= 0.0",
+    },
+    "criticism": {
+        "decision": "COMPLETE",
+        "overall_score": 0.92,
+        "critique": "Evidence is fully verified and hypothesis criteria met with high statistical significance.",
+        "methodological_soundness": 0.95,
+        "reproducibility_assessment": 0.90,
+        "flaws_detected": [],
+        "recommended_actions": [],
+    },
+}
+
 
 class MockLLMProvider:
     """Configurable mock provider implementing LLMProvider protocol for testing."""
@@ -97,6 +149,8 @@ class MockLLMProvider:
             selected_content = self._format_value(self.responses[request.agent_name])
         elif request.action_name and request.action_name in self.responses:
             selected_content = self._format_value(self.responses[request.action_name])
+        elif request.action_name and request.action_name in DEFAULT_STRUCTURED_ACTIONS:
+            selected_content = self._format_value(DEFAULT_STRUCTURED_ACTIONS[request.action_name])
         else:
             selected_content = self.default_text
             for key, val in self.responses.items():

@@ -57,7 +57,7 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["testsprite_tests"]
+exclude = ["testsprite_tests", ".rex_workspaces"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [

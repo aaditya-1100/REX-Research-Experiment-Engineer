@@ -236,6 +236,7 @@ class ExperimentReproducer:
         simulated_results: list[dict[str, Any]] | None = None,
         tolerance: float = 1e-3,
         actor: ActorType | str = ActorType.VERIFIER,
+        allow_mock_fallback: bool = False,
     ) -> ReproductionReport:
         """Perform a formal experiment reproduction attempt.
 
@@ -244,6 +245,7 @@ class ExperimentReproducer:
         - Creates a NEW ExecutionModel with lineage metadata linking to original.
         - Emits REPRODUCTION_STARTED and REPRODUCTION_COMPLETED / REPRODUCTION_FAILED events.
         - Compares metric values against original results within tolerance.
+        - Rejects silent metric mirroring unless explicitly opted in via allow_mock_fallback.
         """
         started_at = datetime.now(UTC)
         actor_enum = (
@@ -330,8 +332,8 @@ class ExperimentReproducer:
                 repro_exec.status = "completed"
                 repro_exec.finished_at = datetime.now(UTC)
                 self.session.flush()
-            else:
-                # Default mock behavior if no runner provided: mirror original metrics
+            elif allow_mock_fallback:
+                # Explicitly opted-in mock fallback (used ONLY when testing DB record preservation)
                 for orig_res in orig_exec.results:
                     if orig_res.metric_value is not None:
                         res_model = ResultModel(
@@ -345,6 +347,16 @@ class ExperimentReproducer:
                 repro_exec.status = "completed"
                 repro_exec.finished_at = datetime.now(UTC)
                 self.session.flush()
+            else:
+                # Disallow silent metric mirroring: no runner was provided for computational re-execution
+                repro_exec.status = "failed"
+                repro_exec.finished_at = datetime.now(UTC)
+                self.session.flush()
+                outcome = ReproductionOutcome.FAILED
+                error_msg = (
+                    "No execution runner provided for computational reproduction. "
+                    "Automatic metric mirroring is disabled for epistemic integrity."
+                )
 
             # Compare reproduced results with original results
             orig_metrics = {
@@ -399,7 +411,9 @@ class ExperimentReproducer:
                         )
                     )
 
-            if not comparisons or not all_within_tol:
+            if outcome == ReproductionOutcome.FAILED:
+                pass
+            elif not comparisons or not all_within_tol:
                 outcome = ReproductionOutcome.DIVERGED
             elif any_diff:
                 outcome = ReproductionOutcome.WITHIN_TOLERANCE

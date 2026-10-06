@@ -1,7 +1,7 @@
-"""Controlled Baseline-vs-REX Comparative Evaluation (REX-045).
+"""Synthetic Comparative Evaluation Harness (REX-045).
 
-Measures and compares the empirical performance of an autonomous research agent operating
-WITHOUT evidence infrastructure (naive baseline) against REX WITH evidence infrastructure
+Measures and compares the synthetically modeled performance of an autonomous research agent operating
+WITHOUT evidence infrastructure (simulated naive baseline) against REX WITH evidence infrastructure
 across the 6 authoritative dimensions defined in 05_Feature_Tickets.md:
 1. Claim-evidence accuracy
 2. Method-code alignment
@@ -32,7 +32,7 @@ from rex.evidence.verifier import VerificationStatus
 
 
 class BaselineVsRexEvaluator:
-    """Orchestrates controlled comparative evaluation between naive agent and REX (REX-045)."""
+    """Orchestrates synthetic comparative evaluation between simulated naive agent and REX (REX-045)."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -145,10 +145,10 @@ class BaselineVsRexEvaluator:
             "Percentage of planned experiments reaching valid terminal state",
         )
         dim6 = compute_dim(
-            "Execution Latency / Cost",
+            "Synthetic Execution Latency / Cost",
             baseline_costs_time_sec,
             rex_costs_time_sec,
-            "Average wall-clock duration per completed experiment (seconds)",
+            "Synthetic execution time (seconds)",
             lower_is_better=True,
         )
 
@@ -156,14 +156,14 @@ class BaselineVsRexEvaluator:
 
         return ComparativeEvaluationResult(
             comparison_id=comparison_id,
-            comparison_name="REX-045: Controlled Baseline vs REX Evidence Infrastructure",
+            comparison_name="REX-045: Synthetic Comparative Evaluation Harness (Simulated Naive Baseline vs REX)",
             started_at=started_at,
             completed_at=completed_at,
             dimensions=[dim1, dim2, dim3, dim4, dim5, dim6],
             summary_verdict=(
-                f"REX evidence infrastructure demonstrated +{dim1.improvement_pct}% higher claim accuracy, "
+                f"Synthetic comparative evaluation: REX evidence infrastructure demonstrated +{dim1.improvement_pct}% higher claim accuracy, "
                 f"+{dim3.improvement_pct}% reproducibility, and eliminated 100% of unsupported claims "
-                "with statistical significance (p < 0.05)."
+                "with statistical significance (p < 0.05) against simulated naive baseline."
             ),
             cost_summary={
                 "baseline_mean_time_sec": dim6.baseline_value,
@@ -189,7 +189,7 @@ class BaselineVsRexEvaluator:
 
         return EvaluationCaseResult(
             id="case_comparative_eval_suite",
-            case_name="REX-045: Baseline-vs-REX Comparative Evaluation",
+            case_name="REX-045: Synthetic Comparative Evaluation Harness",
             suite="comparative",
             status=EvaluationStatus.PASSED if passed else EvaluationStatus.FAILED,
             duration_ms=round(duration_ms, 2),

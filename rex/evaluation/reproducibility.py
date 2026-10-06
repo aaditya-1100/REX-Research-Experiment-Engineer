@@ -7,8 +7,11 @@ comparing metrics within configurable tolerances, and recording structured repro
 
 from __future__ import annotations
 
+import tempfile
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -18,14 +21,17 @@ from rex.evaluation.models import (
     EvaluationCaseResult,
     EvaluationStatus,
 )
+from rex.evidence.hashing import compute_file_hash
 from rex.evidence.reproduce import (
     ExperimentReproducer,
     ReproductionOutcome,
     ReproductionReport,
 )
 from rex.persistence.models import (
+    ArtifactModel,
     ExecutionModel,
     ExperimentModel,
+    ResultModel,
 )
 
 
@@ -53,11 +59,16 @@ class ReproducibilityEvaluator:
     def evaluate_experiment_reproducibility(
         self,
         experiment_id: str,
+        runner_fn: Any | None = None,
         runs_count: int = 3,
         absolute_tolerance: float = 1e-4,
         relative_tolerance: float = 1e-3,
     ) -> MultiRunReproducibilityReport:
-        """Run multiple reproduction cycles for a single experiment and aggregate metrics."""
+        """Run multiple reproduction cycles for a single experiment and aggregate metrics.
+
+        Executes independent computational re-runs via runner_fn if provided,
+        enforcing strict tolerance boundaries and recording structured reproduction outcomes.
+        """
         # Validate original experiment
         original_exp = self.session.get(ExperimentModel, experiment_id)
         if not original_exp:
@@ -78,6 +89,7 @@ class ReproducibilityEvaluator:
         for _ in range(runs_count):
             repro_result = self.reproducer.reproduce_experiment(
                 experiment_id=experiment_id,
+                runner_fn=runner_fn,
                 tolerance=absolute_tolerance,
                 actor="verifier",
             )
@@ -113,7 +125,7 @@ class ReproducibilityEvaluator:
         )
 
     def run_reproducibility_suite(self) -> EvaluationCaseResult:
-        """Execute the complete REX-044 reproducibility evaluation case on the toy benchmark."""
+        """Execute the complete REX-044 reproducibility evaluation case with real computational re-runs."""
         start_time = time.perf_counter()
 
         # Step 1: Create deterministic benchmark run
@@ -122,9 +134,56 @@ class ReproducibilityEvaluator:
         )
         bench_report = benchmark.run_benchmark(self.session)
 
-        # Step 2: Run reproducibility evaluation with 3 runs
+        # Step 2: Define actual computational runner for re-execution
+        def benchmark_runner(repro_exec: ExecutionModel, orig_exec: ExecutionModel) -> None:
+            """Actively re-executes the deterministic toy benchmark in an independent workspace."""
+            temp_dir = Path(tempfile.mkdtemp(prefix="rex_repro_rerun_"))
+            ws = temp_dir / "workspace"
+            ws.mkdir(parents=True, exist_ok=True)
+
+            seed = orig_exec.seed if orig_exec.seed is not None else 42
+            params = {}
+            if orig_exec.experiment and orig_exec.experiment.parameters_json:
+                params = orig_exec.experiment.parameters_json
+            num_samples = params.get("num_samples", 80)
+            noise_sigma = params.get("noise_sigma", 0.05)
+
+            re_task = ToyBenchmarkTask(
+                task_name="reproduction_re_execution",
+                num_samples=num_samples,
+                random_seed=seed,
+                noise_sigma=noise_sigma,
+            )
+            output = re_task.execute_in_workspace(ws)
+            metrics = output["metrics"]
+            for m_name in ["mse", "mae", "r2_score"]:
+                if m_name in metrics:
+                    res_m = ResultModel(
+                        execution_id=repro_exec.id,
+                        metric_name=m_name,
+                        metric_value=metrics[m_name],
+                        metric_unit="",
+                        result_json={m_name: metrics[m_name]},
+                    )
+                    self.session.add(res_m)
+
+            art_file = output["artifact_file"]
+            art_m = ArtifactModel(
+                research_run_id=orig_exec.experiment.research_run_id,
+                execution_id=repro_exec.id,
+                artifact_type="text_plot",
+                path=str(art_file),
+                content_hash=compute_file_hash(art_file),
+                size_bytes=art_file.stat().st_size,
+            )
+            self.session.add(art_m)
+            repro_exec.status = "completed"
+            repro_exec.finished_at = datetime.now(UTC)
+
+        # Step 3: Run reproducibility evaluation with 3 active computational re-runs
         report = self.evaluate_experiment_reproducibility(
             experiment_id=bench_report.experiment_id,
+            runner_fn=benchmark_runner,
             runs_count=3,
             absolute_tolerance=1e-4,
             relative_tolerance=1e-3,
@@ -141,7 +200,7 @@ class ReproducibilityEvaluator:
 
         return EvaluationCaseResult(
             id="case_reproducibility_suite",
-            case_name="REX-044: Multi-Run Experiment Reproducibility Evaluation",
+            case_name="REX-044: Multi-Run Experiment Computational Reproducibility",
             suite="reproducibility",
             status=EvaluationStatus.PASSED if passed else EvaluationStatus.FAILED,
             duration_ms=round(duration_ms, 2),

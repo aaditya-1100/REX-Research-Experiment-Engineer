@@ -272,7 +272,7 @@ export const EvaluationPage: React.FC = () => {
           }`}
         >
           <TrendingUp className="w-4 h-4" />
-          <span>REX vs Naive Comparative (REX-045)</span>
+          <span>Synthetic Comparative Harness (REX-045)</span>
         </button>
 
         <button
@@ -386,19 +386,29 @@ export const EvaluationPage: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-rex-primary">Authoritative Quality Gates Matrix (X0 through X17)</h3>
-            <Badge variant="success">18 / 18 PASS</Badge>
+            <Badge variant={(gateCompliance?.passed_gates ?? 0) === (gateCompliance?.total_gates ?? 18) ? "success" : "warning"}>
+              {gateCompliance?.passed_gates ?? 0} / {gateCompliance?.total_gates ?? 18} PASS
+            </Badge>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {Object.entries(gateDescriptions).map(([gateId, desc], idx) => {
-              const status = gateCompliance?.gates[gateId] || "PASS";
+              const status = gateCompliance?.gates[gateId] || "NOT_RUN";
+              const badgeVariant =
+                status === "PASS"
+                  ? "success"
+                  : status === "PARTIAL"
+                  ? "warning"
+                  : status === "FAIL"
+                  ? "danger"
+                  : "neutral";
               return (
                 <Card key={gateId} className="p-3.5 bg-rex-surface border-rex-border space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-mono font-bold text-xs text-rex-primary">
                       X{idx}: {gateId.replace(/^X\d+_/, "")}
                     </span>
-                    <Badge variant={status === "PASS" ? "success" : "danger"}>{status}</Badge>
+                    <Badge variant={badgeVariant}>{status}</Badge>
                   </div>
                   <p className="text-xs text-rex-secondary leading-snug">{desc}</p>
                 </Card>
@@ -414,10 +424,10 @@ export const EvaluationPage: React.FC = () => {
           <div className="p-4 bg-rex-surface border border-rex-border rounded-lg space-y-1">
             <h3 className="text-sm font-bold text-rex-primary flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-rex-success" />
-              Controlled Comparative Evaluation: Baseline vs REX (REX-045)
+              Synthetic Comparative Evaluation Harness: Simulated Naive Baseline vs REX (REX-045)
             </h3>
             <p className="text-xs text-rex-secondary">
-              Under the defined synthetic comparative evaluation protocol, contrasting a configured unverified baseline against REX with deterministic evidence and verification infrastructure across 6 dimensions.
+              Under the defined synthetic comparative evaluation protocol, contrasting a simulated unverified naive baseline against REX with deterministic evidence and verification infrastructure across 6 dimensions.
             </p>
           </div>
 
@@ -435,7 +445,7 @@ export const EvaluationPage: React.FC = () => {
                       <thead>
                         <tr className="border-b border-rex-border text-rex-muted">
                           <th className="py-2 pr-4 font-semibold uppercase text-[10px]">Dimension</th>
-                          <th className="py-2 px-4 font-semibold uppercase text-[10px]">Naive Baseline</th>
+                          <th className="py-2 px-4 font-semibold uppercase text-[10px]">Simulated Naive Baseline</th>
                           <th className="py-2 px-4 font-semibold uppercase text-[10px]">REX Platform</th>
                           <th className="py-2 px-4 font-semibold uppercase text-[10px]">Delta</th>
                           <th className="py-2 pl-4 font-semibold uppercase text-[10px]">Protocol Outcome</th>
