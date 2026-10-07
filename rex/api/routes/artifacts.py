@@ -117,10 +117,11 @@ def get_artifact_content(
     if not model:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found.")
 
-    artifact_root = get_settings().persistence.artifact_root
-    p = Path(model.path)
-    if not p.is_absolute():
-        p = artifact_root / p
+    artifact_root = get_settings().persistence.artifact_root.resolve()
+    raw_p = Path(model.path)
+    p = raw_p.resolve() if raw_p.is_absolute() else (artifact_root / raw_p).resolve()
+    if not p.is_relative_to(artifact_root):
+        raise HTTPException(status_code=403, detail="Path traversal detected")
 
     if not p.exists():
         raise HTTPException(

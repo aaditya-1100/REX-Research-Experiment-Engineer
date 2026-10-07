@@ -66,3 +66,4 @@ testsprite_tests/tmp/
 testsprite_tests/tmp/config.json
 .agents/
 .rex_workspaces/
+*.zip

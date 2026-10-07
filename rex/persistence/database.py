@@ -20,10 +20,13 @@ class Base(DeclarativeBase):
 
 
 def _enable_sqlite_foreign_keys(dbapi_connection: Any, connection_record: Any) -> None:
-    """Ensure SQLite enforces foreign key constraints on every connection."""
+    """Ensure SQLite enforces foreign key constraints and optimal concurrency on every connection."""
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
     finally:
         cursor.close()
 
@@ -55,6 +58,10 @@ def create_db_engine(database_url: str | None = None, echo: bool = False) -> Eng
         event.listen(engine, "connect", _enable_sqlite_foreign_keys)
 
     return engine
+
+
+# Default application-wide engine instance
+engine: Engine = create_db_engine()
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -102,13 +102,67 @@ def compute_canonical_code_hash(
     return hasher.hexdigest()
 
 
+class SafeCodeVisitor(ast.NodeVisitor):
+    """Inspects AST nodes for dangerous imports and builtin functions."""
+
+    DANGEROUS_MODULES: ClassVar[set[str]] = {
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pty",
+        "ctypes",
+        "shutil",
+        "urllib",
+        "requests",
+        "multiprocessing",
+    }
+    DANGEROUS_BUILTINS: ClassVar[set[str]] = {
+        "eval",
+        "exec",
+        "__import__",
+        "open",
+        "compile",
+        "breakpoint",
+    }
+
+    def __init__(self, filename: str) -> None:
+        self.filename = filename
+        self.errors: list[str] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            base_mod = alias.name.split(".")[0]
+            if base_mod in self.DANGEROUS_MODULES:
+                self.errors.append(
+                    f"Forbidden import of '{alias.name}' detected in '{self.filename}'."
+                )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module:
+            base_mod = node.module.split(".")[0]
+            if base_mod in self.DANGEROUS_MODULES:
+                self.errors.append(
+                    f"Forbidden import of '{node.module}' detected in '{self.filename}'."
+                )
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id in self.DANGEROUS_BUILTINS:
+            self.errors.append(
+                f"Forbidden call to dangerous builtin '{node.func.id}' detected in '{self.filename}'."
+            )
+        self.generic_visit(node)
+
+
 def validate_code_proposal(proposal: GeneratedCodeProposal) -> list[str]:
     """Perform deterministic invariant validation on a code proposal.
 
     Checks:
     1. Entrypoint presence in source_files
     2. Path safety (no traversal, no absolute paths, no drive colons)
-    3. Python AST syntax validity on .py files
+    3. Python AST syntax validity and security safety on .py files
     4. Command safety (no shell injection characters)
     """
     errors: list[str] = []
@@ -137,11 +191,14 @@ def validate_code_proposal(proposal: GeneratedCodeProposal) -> list[str]:
         if ".." in parts:
             errors.append(f"Path traversal ('..') detected in '{path_str}'.")
 
-    # 3. Python AST syntax validation
+    # 3. Python AST syntax validation and security checks
     for rel_path, code_content in proposal.source_files.items():
         if rel_path.endswith(".py"):
             try:
-                ast.parse(code_content, filename=rel_path)
+                tree = ast.parse(code_content, filename=rel_path)
+                visitor = SafeCodeVisitor(filename=rel_path)
+                visitor.visit(tree)
+                errors.extend(visitor.errors)
             except SyntaxError as e:
                 errors.append(
                     f"Syntax error in '{rel_path}' at line {e.lineno}, col {e.offset}: {e.msg}"

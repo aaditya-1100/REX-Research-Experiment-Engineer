@@ -96,6 +96,13 @@ def _do_compare_experiments(exp_ids: list[str], session: Session) -> ExperimentC
     if not exp_models:
         raise HTTPException(status_code=404, detail="No matching experiments found.")
 
+    run_ids = {m.research_run_id for m in exp_models if m.research_run_id}
+    if len(run_ids) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot compare experiments across different research runs",
+        )
+
     exp_responses = [_build_experiment_response(session, m) for m in exp_models]
 
     # Gather metrics across all executions of these experiments

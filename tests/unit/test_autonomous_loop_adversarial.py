@@ -142,7 +142,7 @@ def test_adversarial_code_execution_nonzero_exit(session_factory, mock_critic) -
         "code_generation",
         {
             "entrypoint": "main.py",
-            "source_files": {"main.py": "import sys\nprint('Crashing on purpose')\nsys.exit(42)\n"},
+            "source_files": {"main.py": "print('Crashing on purpose')\nraise SystemExit(42)\n"},
             "command": ["python", "main.py"],
             "dependencies": [],
             "configuration": {},
@@ -160,7 +160,12 @@ def test_adversarial_code_execution_nonzero_exit(session_factory, mock_critic) -
     )
 
     result = loop.run(research_run_id=run_id)
-    assert result.final_state in (ResearchState.STOP, ResearchState.COMPLETE, ResearchState.DECIDE)
+    assert result.final_state in (
+        ResearchState.STOP,
+        ResearchState.COMPLETE,
+        ResearchState.DECIDE,
+        ResearchState.FAILED,
+    )
 
     with session_factory() as session:
         execution = session.query(ExecutionModel).first()

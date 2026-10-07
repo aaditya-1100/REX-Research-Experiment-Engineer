@@ -29,7 +29,7 @@ from rex.api.schemas import (
     VerificationReportResponse,
 )
 from rex.controller.state_machine import ResearchStateMachine, create_research_run
-from rex.domain.models import ClaimStatus, ResearchState
+from rex.domain.models import TERMINAL_STATES, ClaimStatus, ResearchState
 from rex.evidence.verifier import ResearchVerifier
 from rex.observability.events import ActorType, EventType, create_event
 from rex.persistence.models import (
@@ -299,6 +299,17 @@ def pause_run(
     if not model:
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
+    try:
+        current_state = ResearchState(model.status)
+        if current_state in TERMINAL_STATES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot pause research run in terminal state '{current_state.value}'.",
+            )
+    except ValueError:
+        if model.status == "PAUSED":
+            raise HTTPException(status_code=400, detail="Research run is already paused.")
+
     # Record pause event
     model.status = "PAUSED"
     session.add(model)
@@ -326,6 +337,34 @@ def resume_run(
     if not model:
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
+    if model.status in ("COMPLETE", "FAILED", "STOP"):
+        try:
+            ResearchStateMachine.validate_transition(
+                ResearchState(model.status),
+                ResearchState.UNDERSTAND,
+                actor=ActorType.CONTROLLER,
+                run_id=run_id,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot resume research run in terminal state '{model.status}': {exc}",
+            ) from exc
+
+    if model.status not in ("PAUSED", "INITIALIZE", "UNDERSTAND"):
+        try:
+            ResearchStateMachine.validate_transition(
+                ResearchState(model.status),
+                ResearchState.UNDERSTAND,
+                actor=ActorType.CONTROLLER,
+                run_id=run_id,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot resume research run from state '{model.status}': {exc}",
+            ) from exc
+
     model.status = "UNDERSTAND"
     session.add(model)
     event = create_event(
@@ -339,6 +378,10 @@ def resume_run(
     )
     EventRepository(session).record_event(event)
     return _build_run_response(session, model)
+
+
+pause_research_run = pause_run
+resume_research_run = resume_run
 
 
 @router.get("/{run_id}/hypotheses", response_model=list[HypothesisResponse])

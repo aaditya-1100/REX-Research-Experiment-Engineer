@@ -22,6 +22,7 @@ from rex.domain.models import (
     ExecutionStatus,
 )
 from rex.execution.backend import ExecutionBackend
+from rex.execution.canaries import scrub_logs_and_credentials
 from rex.execution.models import ExecutionOutcome, ExecutionRequest
 from rex.execution.resources import ResourceLimits
 from rex.observability.events import ActorType, EventSink
@@ -128,9 +129,10 @@ def run_execution_in_sandbox(
         )
         raise
 
-    # 5. Persist stdout / stderr log artifacts if non-empty
+    # 5. Persist stdout / stderr log artifacts if non-empty (scrubbed for credentials)
     if outcome.stdout:
-        stdout_bytes = outcome.stdout.encode("utf-8")
+        scrubbed_stdout = scrub_logs_and_credentials(outcome.stdout)
+        stdout_bytes = scrubbed_stdout.encode("utf-8")
         stdout_hash = hashlib.sha256(stdout_bytes).hexdigest()
         stdout_art = record_artifact(
             session=session,
@@ -147,7 +149,8 @@ def run_execution_in_sandbox(
         exec_model.stdout_artifact_id = stdout_art.id
 
     if outcome.stderr:
-        stderr_bytes = outcome.stderr.encode("utf-8")
+        scrubbed_stderr = scrub_logs_and_credentials(outcome.stderr)
+        stderr_bytes = scrubbed_stderr.encode("utf-8")
         stderr_hash = hashlib.sha256(stderr_bytes).hexdigest()
         stderr_art = record_artifact(
             session=session,

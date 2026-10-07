@@ -39,11 +39,45 @@ def validate_safe_relative_path(path: str | Path, base_dir: Path) -> Path:
     if p.drive or ":" in raw_path_str:
         raise PathTraversalError(f"Drive-relative or colon path '{raw_path_str}' is forbidden.")
 
-    # Check for traversal components
+    # Reject UNC paths
+    if raw_path_str.startswith(("//", "\\\\")):
+        raise PathTraversalError(f"UNC path '{raw_path_str}' is forbidden.")
+
+    # Check for traversal components and Windows reserved device names
+    windows_reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    }
     for part in p.parts:
         if part == "..":
             raise PathTraversalError(
                 f"Path traversal component ('..') detected in '{raw_path_str}'."
+            )
+        part_upper = part.upper()
+        part_stem_upper = Path(part).stem.upper()
+        if part_upper in windows_reserved or part_stem_upper in windows_reserved:
+            raise PathTraversalError(
+                f"Windows reserved device name '{part}' detected in '{raw_path_str}'."
             )
 
     base_resolved = base_dir.resolve()

@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
+
+from rex.execution.workspace import validate_safe_relative_path
 
 if TYPE_CHECKING:
     from rex.agents.coding import CodingAgent
@@ -991,24 +994,34 @@ class AutonomousResearchLoop:
                     code_files=code_files,
                     command=command,
                     actor=ActorType.EXECUTION_WORKER,
-                    results=[{"metric_name": "accuracy", "metric_value": 0.88, "unit": "ratio"}],
+                    results=None,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Execution orchestrator reported execution failure: %s", exc)
                 failed = True
         else:
-            # Deterministic local workspace execution
+            # Deterministic local workspace execution with strict security isolation
             try:
                 workspace_dir = Path(".rex_workspaces") / research_run_id / f"exec_{execution_id}"
                 workspace_dir.mkdir(parents=True, exist_ok=True)
                 for rel_path, content in code_files.items():
-                    target_file = workspace_dir / rel_path
+                    target_file = validate_safe_relative_path(rel_path, workspace_dir)
                     target_file.parent.mkdir(parents=True, exist_ok=True)
                     target_file.write_text(content, encoding="utf-8")
+
+                safe_env = {
+                    "PYTHONUNBUFFERED": "1",
+                    "PATH": os.environ.get("PATH", ""),
+                    "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+                    "COMSPEC": os.environ.get("COMSPEC", ""),
+                    "TEMP": str(workspace_dir),
+                    "TMP": str(workspace_dir),
+                }
 
                 proc = subprocess.run(
                     command,
                     cwd=str(workspace_dir),
+                    env=safe_env,
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -1029,20 +1042,21 @@ class AutonomousResearchLoop:
                     except (json.JSONDecodeError, OSError):
                         pass
 
-                if not metrics_to_record:
-                    metrics_to_record = [
-                        {"metric_name": "accuracy", "metric_value": 0.88, "unit": "ratio"}
-                    ]
+                # If no valid empirical results are produced, record execution failure
+                if not metrics_to_record or proc.returncode != 0:
+                    failed = True
 
                 with get_db_session(self.session_factory) as session:
                     exec_model = session.get(ExecutionModel, execution_id)
                     if exec_model:
                         exec_model.status = (
                             ExecutionStatus.COMPLETED.value
-                            if proc.returncode == 0
+                            if not failed
                             else ExecutionStatus.FAILED.value
                         )
-                        exec_model.exit_code = proc.returncode
+                        exec_model.exit_code = (
+                            proc.returncode if proc.returncode != 0 else (0 if not failed else 1)
+                        )
                         session.flush()
 
                     for m in metrics_to_record:
@@ -1069,8 +1083,6 @@ class AutonomousResearchLoop:
                             actor=ActorType.EXECUTION_WORKER,
                             event_sink=self.event_sink,
                         )
-
-                failed = proc.returncode != 0
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Local execution failed, recording failure: %s", exc)
                 failed = True

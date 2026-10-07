@@ -7,6 +7,7 @@ factory, and optional static serving of the compiled frontend distribution bundl
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,14 +39,21 @@ def create_app(
     engine: Engine | None = None,
     session_factory: sessionmaker[Session] | None = None,
     rex_settings: RexSettings | None = None,
+    **kwargs: Any,
 ) -> FastAPI:
     """Create and configure a production FastAPI instance for REX."""
-    cfg = rex_settings or get_settings()
+    cfg = rex_settings or kwargs.get("settings") or get_settings()
 
     # Initialize persistence if not provided
-    db_engine = engine or create_db_engine(cfg.persistence.database_url)
-    init_db(db_engine)
-    db_session_factory = session_factory or create_session_factory(db_engine)
+    resolved_engine = (
+        engine or kwargs.get("db_engine") or create_db_engine(cfg.persistence.database_url)
+    )
+    init_db(resolved_engine)
+    resolved_factory = (
+        session_factory
+        or kwargs.get("db_session_factory")
+        or create_session_factory(resolved_engine)
+    )
 
     app = FastAPI(
         title="REX — Research Experiment Engineer",
@@ -56,8 +64,8 @@ def create_app(
     )
 
     # Attach shared resources to app state
-    app.state.engine = db_engine
-    app.state.session_factory = db_session_factory
+    app.state.engine = resolved_engine
+    app.state.session_factory = resolved_factory
     app.state.settings = cfg
 
     # Enable CORS for local-first frontend integration
@@ -70,7 +78,6 @@ def create_app(
             "http://127.0.0.1:3000",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
-            "*",
         ],
         allow_credentials=True,
         allow_methods=["*"],

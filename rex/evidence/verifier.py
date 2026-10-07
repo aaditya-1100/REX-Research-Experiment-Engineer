@@ -562,8 +562,139 @@ class ResearchVerifier:
             except (ValueError, TypeError):
                 pass
 
+        stmt_words = set(re.findall(r"\b[a-zA-Z_]+\b", claim.statement.lower()))
+        comparative_words = {
+            "improved",
+            "improve",
+            "improvement",
+            "increased",
+            "increase",
+            "increasing",
+            "higher",
+            "highest",
+            "greater",
+            "decreased",
+            "decrease",
+            "decreasing",
+            "lower",
+            "lowest",
+            "reduced",
+            "reduce",
+            "reduction",
+            "outperformed",
+            "outperform",
+            "better",
+            "worse",
+            "drop",
+            "dropped",
+            "less",
+            "superior",
+        }
+        if stmt_words & comparative_words and not asserted_vals:
+            return (
+                f"CLAIM_NUMBER_MISMATCH: Claim '{claim.id}' asserts comparative/quantitative statements "
+                f"('{claim.statement}') without specifying empirical metrics or numbers."
+            )
+
         if not asserted_vals:
             return None
+
+        # Validate that claimed metrics match empirical metric names
+        metric_keywords = {
+            "accuracy",
+            "error",
+            "loss",
+            "precision",
+            "recall",
+            "f1",
+            "auc",
+            "roc_auc",
+            "mse",
+            "mae",
+            "rmse",
+            "latency",
+            "runtime",
+            "perplexity",
+            "r2",
+            "cost",
+            "score",
+        }
+        claimed_metrics = stmt_words & metric_keywords
+        if metric_name:
+            claimed_metrics.add(str(metric_name).strip().lower())
+
+        empirical_metric_names = {
+            res.metric_name.strip().lower() for res in lineage.results if res.metric_name
+        }
+        for an in lineage.analyses:
+            out_json = dict(an.output_json or {})
+            if out_json.get("metric_name"):
+                empirical_metric_names.add(str(out_json["metric_name"]).strip().lower())
+            for k in out_json:
+                if k.lower() in metric_keywords:
+                    empirical_metric_names.add(k.lower())
+
+        if (
+            claimed_metrics
+            and empirical_metric_names
+            and not (claimed_metrics & empirical_metric_names)
+        ):
+            return (
+                f"CLAIM_METRIC_MISMATCH: Claim '{claim.id}' asserts metrics {sorted(claimed_metrics)}, "
+                f"but supporting evidence only provides metrics: {sorted(empirical_metric_names)}."
+            )
+
+        # Directional semantic checking
+        decrease_words = {
+            "decreased",
+            "decrease",
+            "decreasing",
+            "lower",
+            "lowest",
+            "reduced",
+            "reduce",
+            "reduction",
+            "drop",
+            "dropped",
+            "less",
+        }
+        increase_words = {
+            "improved",
+            "increase",
+            "increased",
+            "increasing",
+            "higher",
+            "highest",
+            "greater",
+            "gain",
+            "gained",
+            "outperformed",
+            "outperform",
+        }
+
+        # Check empirical deltas from analyses
+        for an in lineage.analyses:
+            out_json = dict(an.output_json or {})
+            for delta_key in (
+                "delta",
+                "diff",
+                "difference",
+                "relative_difference",
+                "improvement",
+                "gain",
+            ):
+                if delta_key in out_json and isinstance(out_json[delta_key], (int, float)):
+                    delta = float(out_json[delta_key])
+                    if stmt_words & decrease_words and delta > self.tolerance:
+                        return (
+                            f"CLAIM_DIRECTION_MISMATCH: Claim '{claim.id}' asserts decrease/reduction ('{claim.statement}'), "
+                            f"but empirical evidence shows an increase (delta={delta} > {self.tolerance})."
+                        )
+                    if stmt_words & increase_words and delta < -self.tolerance:
+                        return (
+                            f"CLAIM_DIRECTION_MISMATCH: Claim '{claim.id}' asserts increase/improvement ('{claim.statement}'), "
+                            f"but empirical evidence shows a decrease (delta={delta} < -{self.tolerance})."
+                        )
 
         # 3. Check structured metric assertions against linked results
         if metric_name and asserted_metric_val is not None:

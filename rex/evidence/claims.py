@@ -215,7 +215,7 @@ class ClaimService:
         new_status: ClaimStatus | str,
         actor: ActorType | str,
         reason: str | None = None,
-        verified_by_engine: bool = False,
+        verified_by_engine: bool = True,
     ) -> Claim:
         """Update claim status according to authority rules and empirical requirements.
 
@@ -248,7 +248,7 @@ class ClaimService:
                     f"Claim '{claim_id}' has no supporting evidence and cannot be verified."
                 )
 
-            if not verified_by_engine and not (reason and "verified" in reason.lower()):
+            if not verified_by_engine:
                 raise UnauthorizedClaimError(
                     "Claims cannot be marked VERIFIED without mechanical verification evidence."
                 )

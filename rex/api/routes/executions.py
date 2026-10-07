@@ -19,6 +19,7 @@ from rex.api.schemas import (
     ResultResponse,
 )
 from rex.config import get_settings
+from rex.execution.canaries import scrub_logs_and_credentials
 from rex.persistence.models import (
     ArtifactModel,
     ExecutionModel,
@@ -159,7 +160,7 @@ def get_execution_logs(
 
     return {
         "execution_id": execution_id,
-        "stdout": stdout_content,
-        "stderr": stderr_content,
+        "stdout": scrub_logs_and_credentials(stdout_content),
+        "stderr": scrub_logs_and_credentials(stderr_content),
         "exit_code": str(model.exit_code) if model.exit_code is not None else "",
     }
