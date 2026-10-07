@@ -231,6 +231,15 @@ class ClaimService:
         if claim_model is None:
             raise ClaimNotFoundError(f"Claim '{claim_id}' not found.")
 
+        if claim_model.status == ClaimStatus.TAMPERED.value and actor_enum not in (
+            ActorType.VERIFIER,
+            ActorType.SYSTEM,
+            ActorType.OWNER,
+        ):
+            raise UnauthorizedClaimError(
+                f"Actor '{actor_enum.value}' is not authorized to modify TAMPERED claims."
+            )
+
         # Security gate for VERIFIED status: requires verifier execution
         if target_status == ClaimStatus.VERIFIED:
             if actor_enum != ActorType.VERIFIER:

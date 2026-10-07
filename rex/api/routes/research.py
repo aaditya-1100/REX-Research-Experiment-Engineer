@@ -310,7 +310,10 @@ def pause_run(
         if model.status == "PAUSED":
             raise HTTPException(status_code=400, detail="Research run is already paused.")
 
-    # Record pause event
+    # Record pause event and preserve pre-pause status
+    cfg = dict(model.configuration_json or {})
+    cfg["pre_paused_status"] = model.status
+    model.configuration_json = cfg
     model.status = "PAUSED"
     session.add(model)
     event = create_event(
@@ -351,21 +354,27 @@ def resume_run(
                 detail=f"Cannot resume research run in terminal state '{model.status}': {exc}",
             ) from exc
 
-    if model.status not in ("PAUSED", "INITIALIZE", "UNDERSTAND"):
-        try:
-            ResearchStateMachine.validate_transition(
-                ResearchState(model.status),
-                ResearchState.UNDERSTAND,
-                actor=ActorType.CONTROLLER,
-                run_id=run_id,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot resume research run from state '{model.status}': {exc}",
-            ) from exc
+    cfg = dict(model.configuration_json or {})
+    resumed_status = cfg.get("pre_paused_status") or "UNDERSTAND"
 
-    model.status = "UNDERSTAND"
+    if model.status == "PAUSED":
+        model.status = resumed_status
+    else:
+        if model.status not in ("INITIALIZE", "UNDERSTAND"):
+            try:
+                ResearchStateMachine.validate_transition(
+                    ResearchState(model.status),
+                    ResearchState.UNDERSTAND,
+                    actor=ActorType.CONTROLLER,
+                    run_id=run_id,
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot resume research run from state '{model.status}': {exc}",
+                ) from exc
+        model.status = "UNDERSTAND"
+
     session.add(model)
     event = create_event(
         event_type=EventType.AUTONOMOUS_ACTION_STARTED,

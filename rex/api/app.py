@@ -89,6 +89,7 @@ def create_app(
     app.include_router(research.router, prefix="/api")
     app.include_router(experiments.router, prefix="/api")
     app.include_router(executions.router, prefix="/api")
+    app.include_router(executions.executions_router, prefix="/api")
     app.include_router(evidence.router, prefix="/api")
     app.include_router(reports.router, prefix="/api")
     app.include_router(artifacts.router, prefix="/api")

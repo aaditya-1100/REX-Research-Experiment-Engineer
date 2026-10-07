@@ -634,15 +634,13 @@ class ResearchVerifier:
                 if k.lower() in metric_keywords:
                     empirical_metric_names.add(k.lower())
 
-        if (
-            claimed_metrics
-            and empirical_metric_names
-            and not (claimed_metrics & empirical_metric_names)
-        ):
-            return (
-                f"CLAIM_METRIC_MISMATCH: Claim '{claim.id}' asserts metrics {sorted(claimed_metrics)}, "
-                f"but supporting evidence only provides metrics: {sorted(empirical_metric_names)}."
-            )
+        if claimed_metrics and empirical_metric_names:
+            missing_metrics = claimed_metrics - empirical_metric_names
+            if missing_metrics:
+                return (
+                    f"CLAIM_METRIC_MISMATCH: Claim '{claim.id}' asserts metrics {sorted(missing_metrics)}, "
+                    f"but supporting evidence only provides metrics: {sorted(empirical_metric_names)}."
+                )
 
         # Directional semantic checking
         decrease_words = {
@@ -657,6 +655,7 @@ class ResearchVerifier:
             "drop",
             "dropped",
             "less",
+            "worse",
         }
         increase_words = {
             "improved",
@@ -670,6 +669,8 @@ class ResearchVerifier:
             "gained",
             "outperformed",
             "outperform",
+            "better",
+            "superior",
         }
 
         # Check empirical deltas from analyses
@@ -679,6 +680,7 @@ class ResearchVerifier:
                 "delta",
                 "diff",
                 "difference",
+                "absolute_difference",
                 "relative_difference",
                 "improvement",
                 "gain",

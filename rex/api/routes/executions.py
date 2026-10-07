@@ -27,6 +27,7 @@ from rex.persistence.models import (
 )
 
 router = APIRouter(prefix="/runs", tags=["executions"])
+executions_router = APIRouter(prefix="/executions", tags=["executions"])
 
 
 @router.get("/{execution_id}", response_model=ExecutionResponse)
@@ -164,3 +165,13 @@ def get_execution_logs(
         "stderr": scrub_logs_and_credentials(stderr_content),
         "exit_code": str(model.exit_code) if model.exit_code is not None else "",
     }
+
+
+for _route in router.routes:
+    if hasattr(_route, "endpoint") and hasattr(_route, "methods"):
+        executions_router.add_api_route(
+            _route.path.removeprefix("/runs"),
+            _route.endpoint,
+            methods=_route.methods,
+            response_model=getattr(_route, "response_model", None),
+        )

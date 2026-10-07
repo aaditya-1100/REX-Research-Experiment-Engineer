@@ -193,6 +193,10 @@ class ExecutionModel(Base):
     stdout_artifact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stderr_artifact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.pop("research_run_id", None)
+        super().__init__(**kwargs)
+
     # Relationships
     experiment: Mapped["ExperimentModel"] = relationship(
         "ExperimentModel", back_populates="executions"
