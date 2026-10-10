@@ -33,10 +33,43 @@ class SystemStatusResponse(BaseSchema):
     claims_count: int = 0
     reports_count: int = 0
     app_name: str = "REX"
-    version: str = "v0.8.0"
+    version: str = "0.1.0"
     environment: str = "development"
     docker_enabled: bool = True
     database_url_masked: str = ""
+
+
+class SystemDiagnosticsResponse(BaseSchema):
+    """Structured environment diagnostics and operational readiness."""
+
+    status: str = Field(
+        default="healthy", description="Overall health: healthy, degraded, or unhealthy"
+    )
+    python_version: str = Field(description="Host Python version string")
+    python_version_ok: bool = Field(description="True if Python >= 3.11")
+    sqlite_wal_enabled: bool = Field(description="True if SQLite WAL journaling is enabled")
+    workspace_writable: bool = Field(description="True if workspace root directory is writable")
+    artifact_writable: bool = Field(description="True if artifact root directory is writable")
+    docker_available: bool = Field(description="True if Docker daemon is accessible")
+    database_connected: bool = Field(description="True if database probe succeeded")
+    details: dict[str, Any] = Field(default_factory=dict, description="Detailed diagnostic metrics")
+
+
+class ErrorDetail(BaseSchema):
+    """Standardized deterministic error payload."""
+
+    code: str = Field(description="Machine-readable error classification code")
+    message: str = Field(description="Human-readable error description")
+    details: Any = Field(
+        default_factory=dict, description="Contextual error details or validation list"
+    )
+    correlation_id: str | None = Field(default=None, description="Request correlation identifier")
+
+
+class ErrorEnvelope(BaseSchema):
+    """Standardized deterministic top-level error response envelope."""
+
+    error: ErrorDetail
 
 
 class SettingsResponse(BaseSchema):

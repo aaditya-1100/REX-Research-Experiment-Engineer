@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -58,11 +58,12 @@ def list_artifacts(
 @router.get("/{artifact_id}", response_model=ArtifactResponse)
 def get_artifact(
     artifact_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> ArtifactResponse:
     """Retrieve metadata for a specific artifact."""
     model = session.get(ArtifactModel, artifact_id)
-    if not model:
+    if not model or (run_id is not None and model.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found.")
 
     return ArtifactResponse(
@@ -81,14 +82,17 @@ def get_artifact(
 @router.api_route("/{artifact_id}/verify", methods=["GET", "POST"])
 def verify_artifact(
     artifact_id: str,
+    request: Request,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> dict:
     """Check cryptographic SHA-256 hash of artifact against disk content."""
     model = session.get(ArtifactModel, artifact_id)
-    if not model:
+    if not model or (run_id is not None and model.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found.")
 
-    artifact_root = get_settings().persistence.artifact_root
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    artifact_root = Path(settings.persistence.artifact_root)
     p = Path(model.path)
     if not p.is_absolute():
         p = artifact_root / p
@@ -110,14 +114,17 @@ def verify_artifact(
 @router.get("/{artifact_id}/content")
 def get_artifact_content(
     artifact_id: str,
+    request: Request,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ):
     """Retrieve raw file content or stream file for download/preview."""
     model = session.get(ArtifactModel, artifact_id)
-    if not model:
+    if not model or (run_id is not None and model.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found.")
 
-    artifact_root = get_settings().persistence.artifact_root.resolve()
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    artifact_root = Path(settings.persistence.artifact_root).resolve()
     raw_p = Path(model.path)
     p = raw_p.resolve() if raw_p.is_absolute() else (artifact_root / raw_p).resolve()
     if not p.is_relative_to(artifact_root):

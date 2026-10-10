@@ -5,7 +5,7 @@ Exposes non-sensitive system configuration, resource budgets, and environment pa
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from rex.api.schemas import SettingsResponse
 from rex.config import get_settings
@@ -14,14 +14,14 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 @router.get("", response_model=SettingsResponse)
-def get_system_settings() -> SettingsResponse:
+def get_system_settings(request: Request) -> SettingsResponse:
     """Retrieve sanitized system settings with secrets masked."""
-    settings = get_settings()
+    settings = getattr(request.app.state, "settings", None) or get_settings()
 
     return SettingsResponse(
         app={
             "name": settings.app.name,
-            "version": "v0.8.0",
+            "version": settings.app.version,
             "environment": settings.app.environment,
             "debug": settings.app.debug,
             "log_level": settings.app.log_level,
@@ -59,6 +59,7 @@ def get_system_settings() -> SettingsResponse:
         llm={
             "provider": settings.llm.provider,
             "model": settings.llm.model,
+            "api_key": "**********" if settings.llm.api_key is not None else None,
             "api_key_configured": settings.llm.api_key is not None,
             "request_timeout_seconds": settings.llm.request_timeout_seconds,
             "max_token_cost": settings.llm.max_token_cost,

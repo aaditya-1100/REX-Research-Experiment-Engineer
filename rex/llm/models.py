@@ -119,6 +119,10 @@ class LLMRequest(BaseModel):
         ge=0.0,
         description="Estimated token cost in USD for pre-flight budget reservation",
     )
+    idempotency_token: str | None = Field(
+        default=None,
+        description="Optional client idempotency token to guarantee execution deduplication",
+    )
 
     @field_validator("user_prompt")
     @classmethod

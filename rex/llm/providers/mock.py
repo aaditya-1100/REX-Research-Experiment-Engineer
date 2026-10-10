@@ -51,11 +51,41 @@ DEFAULT_STRUCTURED_ACTIONS: dict[str, dict[str, Any]] = {
         "expected_metrics": ["accuracy"],
     },
     "hypothesis_generation": {
-        "statement": "Increasing model depth improves benchmark accuracy by at least 5%",
-        "rationale": "Empirical depth scaling in literature demonstrates improved representation capacity",
-        "expected_direction": "maximize",
-        "variables_changed": ["depth"],
-        "falsification_condition": "accuracy improvement <= 0.0",
+        "hypotheses": [
+            {
+                "statement": "Increasing model depth improves benchmark accuracy by at least 5%",
+                "rationale": "Empirical depth scaling in literature demonstrates improved representation capacity",
+                "expected_direction": "increase",
+                "falsification_condition": "accuracy improvement <= 0.0",
+                "independent_variables": ["depth"],
+                "dependent_variables": ["accuracy"],
+                "baseline_reference": "standard_depth",
+            }
+        ]
+    },
+    "competing_hypothesis_generation": {
+        "hypotheses": [
+            {
+                "statement": "Cosine annealing learning rate schedule improves test accuracy by at least 1.5% compared to constant LR on CIFAR-10.",
+                "rationale": "Gradual temperature decay enables deeper convergence in parameter loss landscapes.",
+                "expected_direction": "increase",
+                "falsification_condition": "Test accuracy fails to exceed constant LR baseline by >= 1.5% with p < 0.05.",
+                "independent_variables": ["lr_schedule"],
+                "dependent_variables": ["accuracy"],
+                "baseline_reference": "constant_learning_rate",
+                "competing_hypothesis": "Observed gains are attributable to extended training iterations rather than schedule curvature.",
+            },
+            {
+                "statement": "Observed gains are attributable to extended training iterations rather than schedule curvature.",
+                "rationale": "More total gradient update steps permit greater loss descent regardless of schedule.",
+                "expected_direction": "increase",
+                "falsification_condition": "Test accuracy is identical when total update steps are matched between schedules.",
+                "independent_variables": ["total_gradient_steps"],
+                "dependent_variables": ["accuracy"],
+                "baseline_reference": "matched_steps_baseline",
+                "competing_hypothesis": "Cosine annealing schedule dynamics provide intrinsic optimization benefits.",
+            },
+        ]
     },
     "criticism": {
         "decision": "COMPLETE",

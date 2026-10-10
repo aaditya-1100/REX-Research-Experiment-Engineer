@@ -1,17 +1,21 @@
-"""FastAPI Application Factory for REX (REX-037).
+"""FastAPI Application Factory for REX (REX-037, REX-038).
 
 Configures middleware, route registration, dependency injection of database engine and session
-factory, and optional static serving of the compiled frontend distribution bundle.
+factory, correlation ID propagation, standardized error envelopes, crash recovery reconciliation,
+and optional static serving of the compiled frontend distribution bundle.
 """
 
 from __future__ import annotations
 
+import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -28,11 +32,50 @@ from rex.api.routes import (
     system,
 )
 from rex.config import RexSettings, get_settings
+from rex.observability.logging import get_correlation_id, set_correlation_id
 from rex.persistence.database import (
     create_db_engine,
     create_session_factory,
     init_db,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _status_to_error_code(status_code: int) -> str:
+    """Map HTTP status codes to standardized machine-readable error codes."""
+    mapping = {
+        400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "RESOURCE_NOT_FOUND",
+        405: "METHOD_NOT_ALLOWED",
+        409: "CONFLICT",
+        422: "VALIDATION_ERROR",
+        429: "RATE_LIMIT_EXCEEDED",
+        500: "INTERNAL_SERVER_ERROR",
+        502: "BAD_GATEWAY",
+        503: "SERVICE_UNAVAILABLE",
+        504: "GATEWAY_TIMEOUT",
+    }
+    return mapping.get(status_code, f"HTTP_{status_code}")
+
+
+def _reconcile_startup_crashes(session_factory: sessionmaker[Session]) -> None:
+    """Reconcile orphaned executions stuck in RUNNING status on application boot."""
+    try:
+        from rex.controller.execution_orchestrator import ExecutionOrchestrator
+
+        orchestrator = ExecutionOrchestrator(session_factory=session_factory)
+        reconciled = orchestrator.reconcile_stale_executions(stale_threshold_seconds=0)
+        if reconciled:
+            logger.info(
+                "Startup crash recovery: reconciled %d stale executions: %s",
+                len(reconciled),
+                reconciled,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Startup crash recovery failed: %s", exc)
 
 
 def create_app(
@@ -55,10 +98,13 @@ def create_app(
         or create_session_factory(resolved_engine)
     )
 
+    # Execute startup crash recovery reconciliation immediately
+    _reconcile_startup_crashes(resolved_factory)
+
     app = FastAPI(
         title="REX — Research Experiment Engineer",
         description="Autonomous computational research with machine-readable provenance and independent verification",
-        version="0.9.0",
+        version=cfg.app.version,
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -67,6 +113,79 @@ def create_app(
     app.state.engine = resolved_engine
     app.state.session_factory = resolved_factory
     app.state.settings = cfg
+
+    # Add Correlation ID Middleware
+    @app.middleware("http")
+    async def correlation_id_middleware(request: Request, call_next: Any) -> Any:
+        corr_id = (
+            request.headers.get("X-Correlation-ID")
+            or request.headers.get("X-Request-ID")
+            or str(uuid.uuid4())
+        )
+        set_correlation_id(corr_id)
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = corr_id
+        return response
+
+    # Exception Handlers for Deterministic Error Envelopes
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        corr_id = get_correlation_id()
+        code = _status_to_error_code(exc.status_code)
+        msg = exc.detail if isinstance(exc.detail, str) else "Request error"
+        details = exc.detail if not isinstance(exc.detail, str) else {}
+        headers = dict(getattr(exc, "headers", None) or {})
+        headers["X-Correlation-ID"] = corr_id
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": msg,
+                    "details": details,
+                    "correlation_id": corr_id,
+                },
+                "detail": exc.detail,
+            },
+            headers=headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        corr_id = get_correlation_id()
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": exc.errors(),
+                    "correlation_id": corr_id,
+                },
+                "detail": exc.errors(),
+            },
+            headers={"X-Correlation-ID": corr_id},
+        )
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        corr_id = get_correlation_id()
+        logger.exception("Unhandled server exception: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": "An unexpected internal server error occurred.",
+                    "details": {"error_type": type(exc).__name__},
+                    "correlation_id": corr_id,
+                },
+                "detail": "Internal Server Error",
+            },
+            headers={"X-Correlation-ID": corr_id},
+        )
 
     # Enable CORS for local-first frontend integration
     app.add_middleware(

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -299,16 +300,13 @@ def pause_run(
     if not model:
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
-    try:
-        current_state = ResearchState(model.status)
-        if current_state in TERMINAL_STATES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot pause research run in terminal state '{current_state.value}'.",
-            )
-    except ValueError:
-        if model.status == "PAUSED":
-            raise HTTPException(status_code=400, detail="Research run is already paused.")
+    if model.status in [s.value for s in TERMINAL_STATES]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot pause research run in terminal state '{model.status}'.",
+        )
+    if model.status == "PAUSED":
+        raise HTTPException(status_code=400, detail="Research run is already paused.")
 
     # Record pause event and preserve pre-pause status
     cfg = dict(model.configuration_json or {})
@@ -340,19 +338,11 @@ def resume_run(
     if not model:
         raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
 
-    if model.status in ("COMPLETE", "FAILED", "STOP"):
-        try:
-            ResearchStateMachine.validate_transition(
-                ResearchState(model.status),
-                ResearchState.UNDERSTAND,
-                actor=ActorType.CONTROLLER,
-                run_id=run_id,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot resume research run in terminal state '{model.status}': {exc}",
-            ) from exc
+    if model.status in [s.value for s in TERMINAL_STATES]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resume research run in terminal state '{model.status}'.",
+        )
 
     cfg = dict(model.configuration_json or {})
     resumed_status = cfg.get("pre_paused_status") or "UNDERSTAND"
@@ -383,6 +373,64 @@ def resume_run(
         payload={
             "action": "resume",
             "reason": payload.reason if payload else "User requested resume",
+            "resumed_state": model.status,
+        },
+    )
+    EventRepository(session).record_event(event)
+    return _build_run_response(session, model)
+
+
+@router.post("/{run_id}/cancel", response_model=ResearchRunResponse)
+def cancel_run(
+    run_id: str,
+    payload: RunActionRequest | None = None,
+    session: Session = Depends(get_db),
+) -> ResearchRunResponse:
+    """Cancel an active research run, halting active executions and transitioning to STOP."""
+    model = session.get(ResearchRunModel, run_id)
+    if not model:
+        raise HTTPException(status_code=404, detail=f"Research run '{run_id}' not found.")
+
+    if model.status in [s.value for s in TERMINAL_STATES]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel research run in terminal state '{model.status}'.",
+        )
+
+    previous_state = model.status
+
+    # Cancel any active running executions for this research run
+    from rex.domain.models import ExecutionStatus
+
+    exp_ids = session.scalars(
+        select(ExperimentModel.id).where(ExperimentModel.research_run_id == run_id)
+    ).all()
+    if exp_ids:
+        active_execs = session.scalars(
+            select(ExecutionModel).where(
+                ExecutionModel.experiment_id.in_(exp_ids),
+                ExecutionModel.status.in_(
+                    [ExecutionStatus.RUNNING.value, ExecutionStatus.PENDING.value]
+                ),
+            )
+        ).all()
+        for ex in active_execs:
+            ex.status = ExecutionStatus.CANCELLED.value
+            ex.finished_at = datetime.now(UTC)
+            session.add(ex)
+
+    model.status = ResearchState.STOP.value
+    session.add(model)
+
+    event = create_event(
+        event_type=EventType.RESEARCH_STATE_CHANGED,
+        actor=ActorType.OWNER,
+        research_run_id=run_id,
+        payload={
+            "action": "cancel",
+            "previous_state": previous_state,
+            "new_state": model.status,
+            "reason": payload.reason if payload else "User requested cancellation",
         },
     )
     EventRepository(session).record_event(event)
@@ -391,6 +439,7 @@ def resume_run(
 
 pause_research_run = pause_run
 resume_research_run = resume_run
+cancel_research_run = cancel_run
 
 
 @router.get("/{run_id}/hypotheses", response_model=list[HypothesisResponse])

@@ -77,11 +77,12 @@ def list_claims(
 @router.get("/claims/{claim_id}", response_model=ClaimResponse)
 def get_claim(
     claim_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> ClaimResponse:
     """Retrieve full detail for a claim."""
     model = session.get(ClaimModel, claim_id)
-    if not model:
+    if not model or (run_id is not None and model.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found.")
 
     link_count = (
@@ -108,6 +109,7 @@ def get_claim(
 @router.get("/lineage/{claim_id}", response_model=ClaimLineageResponse)
 def get_claim_lineage(
     claim_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> ClaimLineageResponse:
     """Trace deterministic mechanical provenance lineage for a claim (REX-023 / REX-040).
@@ -116,7 +118,7 @@ def get_claim_lineage(
     Claim -> Analysis -> Result -> Execution -> Experiment -> Code -> Dataset -> Configuration -> Artifact.
     """
     claim = session.get(ClaimModel, claim_id)
-    if not claim:
+    if not claim or (run_id is not None and claim.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found.")
 
     graph_service = EvidenceGraphService(session=session)

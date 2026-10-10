@@ -92,7 +92,7 @@ class ExecutionOrchestrator:
     def __init__(
         self,
         session_factory: sessionmaker[Session],
-        backend: ExecutionBackend,
+        backend: ExecutionBackend | None = None,
         event_sink: EventSink | None = None,
     ) -> None:
         self.session_factory = session_factory

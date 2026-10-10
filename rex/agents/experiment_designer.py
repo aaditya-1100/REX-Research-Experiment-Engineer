@@ -18,6 +18,7 @@ from rex.domain.models import (
     Hypothesis,
     MetricSpec,
     ResearchContext,
+    ResearchCritique,
 )
 from rex.llm.models import LLMRequest
 from rex.observability.events import ActorType
@@ -77,11 +78,15 @@ class ExperimentDesignerAgent(BaseAgent):
         hypothesis: Hypothesis,
         session: Session | None = None,
         actor: ActorType = ActorType.RESEARCH_AGENT,
+        critique: ResearchCritique | None = None,
+        prior_experiment: ExperimentSpecification | None = None,
     ) -> tuple[ExperimentSpecification, Experiment | None]:
         """Convert a hypothesis and research context into an ExperimentSpecification.
 
         If a database session is provided, persists the Experiment via create_experiment()
         and records lifecycle events. Returns (specification, experiment_entity_or_None).
+        Incorporates prior critique findings and prior experiment specs when provided to close
+        the iterative refinement loop.
         """
         # 1. Enforce cross-run hypothesis integrity
         if hypothesis.research_run_id != research_context.research_run_id:
@@ -101,7 +106,8 @@ class ExperimentDesignerAgent(BaseAgent):
             "4. Repetition & Seeds: Must specify a list of integer random seeds (e.g. [42, 123]) and repetitions >= 1.\n"
             "5. Success Criteria: Must define quantitative, unambiguous criteria for confirming the hypothesis.\n"
             "6. Falsification Criteria: Must define quantitative criteria for rejecting the hypothesis.\n"
-            "7. No arbitrary executable script code: Output must only specify experimental configuration."
+            "7. Critique Remediation: If prior critique findings are provided, the new experiment MUST explicitly remediate them.\n"
+            "8. No arbitrary executable script code: Output must only specify experimental configuration."
         )
 
         user_prompt = (
@@ -115,9 +121,50 @@ class ExperimentDesignerAgent(BaseAgent):
             f"Statement: {hypothesis.statement}\n"
             f"Rationale: {hypothesis.rationale}\n"
             f"Expected Direction: {hypothesis.expected_direction.value}\n"
-            f"Falsification Condition: {hypothesis.falsification_condition}\n\n"
-            "Produce an exhaustive, structured experiment design conforming strictly to the JSON schema."
+            f"Falsification Condition: {hypothesis.falsification_condition}\n"
         )
+
+        if critique is not None:
+            user_prompt += (
+                f"\n### [PRIOR CRITIQUE FEEDBACK & REFINEMENT GOALS]\n"
+                f"Recommended Action: {critique.recommended_action}\n"
+                f"Rationale: {critique.recommended_action_rationale}\n"
+            )
+            if critique.methodological_concerns:
+                user_prompt += (
+                    f"Methodological Concerns: {', '.join(critique.methodological_concerns)}\n"
+                )
+            if critique.weaknesses:
+                user_prompt += f"Weaknesses: {', '.join(critique.weaknesses)}\n"
+            if critique.findings:
+                user_prompt += "Specific Findings to Remediate:\n"
+                for f in critique.findings:
+                    sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+                    label = getattr(f, "title", None) or getattr(f, "category", "")
+                    label_str = label.value if hasattr(label, "value") else str(label)
+                    user_prompt += (
+                        f"- [{sev}] {label_str}: {f.description} (Fix: {f.recommendation})\n"
+                    )
+
+        if prior_experiment is not None:
+            metric_names = [
+                m.name
+                if hasattr(m, "name")
+                else (m.get("name", str(m)) if isinstance(m, dict) else str(m))
+                for m in prior_experiment.metrics
+            ]
+            user_prompt += (
+                f"\n### [PRIOR EXPERIMENT SPECIFICATION TO REFINE]\n"
+                f"Name: {prior_experiment.name}\n"
+                f"Method: {prior_experiment.method}\n"
+                f"Baseline: {prior_experiment.baseline}\n"
+                f"Variables: {prior_experiment.variables}\n"
+                f"Controls: {prior_experiment.controls}\n"
+                f"Seeds: {list(prior_experiment.seeds)}\n"
+                f"Metrics: {metric_names}\n"
+            )
+
+        user_prompt += "\nProduce an exhaustive, structured experiment design conforming strictly to the JSON schema."
 
         request = LLMRequest(
             system_prompt=system_prompt,
@@ -127,6 +174,8 @@ class ExperimentDesignerAgent(BaseAgent):
             context={
                 "hypothesis_id": hypothesis.id,
                 "research_question": research_question,
+                "has_prior_critique": critique is not None,
+                "has_prior_experiment": prior_experiment is not None,
             },
         )
 

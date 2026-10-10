@@ -8,7 +8,7 @@ from rex.llm.accounting import (
     release_llm_slot,
     reserve_llm_slot,
 )
-from rex.llm.base import LLMProvider, execute_with_retry
+from rex.llm.base import LLMProvider, clear_idempotency_cache, execute_with_retry
 from rex.llm.models import (
     LLMConfigurationError,
     LLMError,
@@ -26,6 +26,12 @@ from rex.llm.providers import (
     MockLLMProvider,
     OpenAILLMProvider,
     get_llm_provider,
+)
+from rex.llm.stage_router import (
+    ResearchStage,
+    StageConfig,
+    StageModelRouter,
+    StageRouterSettings,
 )
 from rex.llm.structured import StructuredGenerator, extract_json_candidate
 
@@ -45,8 +51,13 @@ __all__ = [
     "LLMUnsupportedProviderError",
     "MockLLMProvider",
     "OpenAILLMProvider",
+    "ResearchStage",
+    "StageConfig",
+    "StageModelRouter",
+    "StageRouterSettings",
     "StructuredGenerator",
     "check_llm_budget",
+    "clear_idempotency_cache",
     "execute_with_retry",
     "extract_json_candidate",
     "finalize_llm_slot",

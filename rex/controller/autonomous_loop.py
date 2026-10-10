@@ -76,6 +76,7 @@ from rex.observability.events import (
 )
 from rex.persistence.database import get_db_session
 from rex.persistence.models import (
+    CritiqueModel,
     ExecutionModel,
     ExperimentModel,
     HypothesisModel,
@@ -830,13 +831,40 @@ class AutonomousResearchLoop:
         exp_id: str | None = None
         if self.designer_agent is not None and hyp_domain is not None:
             try:
+                prior_critique: ResearchCritique | None = None
+                prior_spec: ExperimentSpecification | None = None
                 with get_db_session(self.session_factory) as session:
+                    c_model = (
+                        session.query(CritiqueModel)
+                        .filter(CritiqueModel.research_run_id == research_run_id)
+                        .order_by(CritiqueModel.created_at.desc())
+                        .first()
+                    )
+                    if c_model is not None:
+                        prior_critique = ResearchCritique.from_persistence(c_model)
+
+                    latest_exp_model = (
+                        session.query(ExperimentModel)
+                        .filter(ExperimentModel.research_run_id == research_run_id)
+                        .order_by(ExperimentModel.created_at.desc())
+                        .first()
+                    )
+                    if latest_exp_model is not None and latest_exp_model.specification_json:
+                        try:
+                            prior_spec = ExperimentSpecification.from_dict(
+                                latest_exp_model.specification_json
+                            )
+                        except (ValueError, KeyError, TypeError) as exc:
+                            logger.debug("Prior experiment specification parse omitted: %s", exc)
+
                     spec, exp_entity = self.designer_agent.design_experiment(
                         research_question=rq,
                         research_context=rc,
                         hypothesis=hyp_domain,
                         session=session,
                         actor=ActorType.RESEARCH_AGENT,
+                        critique=prior_critique,
+                        prior_experiment=prior_spec,
                     )
                     if exp_entity is not None:
                         exp_id = exp_entity.id

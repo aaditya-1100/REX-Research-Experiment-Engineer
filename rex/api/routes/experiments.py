@@ -184,11 +184,12 @@ def compare_experiments_post(
 @router.get("/{experiment_id}", response_model=ExperimentResponse)
 def get_experiment(
     experiment_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> ExperimentResponse:
     """Retrieve full experiment detail."""
     model = session.get(ExperimentModel, experiment_id)
-    if not model:
+    if not model or (run_id is not None and model.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found.")
     return _build_experiment_response(session, model)
 
@@ -196,9 +197,14 @@ def get_experiment(
 @router.get("/{experiment_id}/runs", response_model=list[ExecutionResponse])
 def list_experiment_executions(
     experiment_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> list[ExecutionResponse]:
     """List execution attempts for an experiment."""
+    exp = session.get(ExperimentModel, experiment_id)
+    if not exp or (run_id is not None and exp.research_run_id != run_id):
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found.")
+
     repo = ExecutionRepository(session)
     models = repo.list_by_experiment(experiment_id)
     responses = []
@@ -236,11 +242,12 @@ def list_experiment_executions(
 @router.get("/{experiment_id}/reproducibility")
 def assess_reproducibility(
     experiment_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Assess readiness of experiment for mechanical reproduction (REX-027)."""
     exp = session.get(ExperimentModel, experiment_id)
-    if not exp:
+    if not exp or (run_id is not None and exp.research_run_id != run_id):
         raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found.")
 
     reproducer = ExperimentReproducer(session=session)

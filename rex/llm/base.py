@@ -5,6 +5,7 @@ no direct SDK dependencies exist outside isolated provider adapters.
 """
 
 import logging
+import threading
 import time
 from typing import Any, Protocol, runtime_checkable
 
@@ -17,6 +18,16 @@ from rex.llm.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Process-level thread-safe idempotency response cache
+_IDEMPOTENCY_CACHE: dict[str, LLMResponse] = {}
+_IDEMPOTENCY_LOCK = threading.Lock()
+
+
+def clear_idempotency_cache() -> None:
+    """Clear in-memory idempotency cache (used for test teardown)."""
+    with _IDEMPOTENCY_LOCK:
+        _IDEMPOTENCY_CACHE.clear()
 
 
 @runtime_checkable
@@ -50,7 +61,17 @@ def execute_with_retry(
     Retries only on transient network failures, timeouts, and rate limits (429/503).
     Permanent errors (auth, schema, 400) fail immediately.
     Each attempt (initial and retries) consumes an LLM call budget slot when session and research_run_id are provided.
+    Supports idempotency tokens to prevent duplicate executions across network retries.
     """
+    if request.idempotency_token:
+        with _IDEMPOTENCY_LOCK:
+            if request.idempotency_token in _IDEMPOTENCY_CACHE:
+                logger.info(
+                    "Idempotency token '%s' hit; returning cached LLMResponse without duplicate execution.",
+                    request.idempotency_token,
+                )
+                return _IDEMPOTENCY_CACHE[request.idempotency_token]
+
     attempt = 0
     last_error: Exception | None = None
 
@@ -161,6 +182,9 @@ def execute_with_retry(
                     actor=actor_enum,
                     event_sink=event_sink,
                 )
+            if request.idempotency_token:
+                with _IDEMPOTENCY_LOCK:
+                    _IDEMPOTENCY_CACHE[request.idempotency_token] = response
             return response
 
     if last_error:

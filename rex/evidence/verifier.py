@@ -17,9 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rex.analysis.statistics import StatisticalAnalyzer
-from rex.domain.models import ClaimStatus
+from rex.domain.models import ClaimStatus, HypothesisStatus
 from rex.evidence.graph import EvidenceGraphError, EvidenceGraphService
 from rex.evidence.hashing import HashVerificationResult, verify_artifact_hash
+from rex.evidence.self_deception import ScientificSelfDeceptionDetector
 from rex.observability.events import (
     ActorType,
     EventSink,
@@ -32,6 +33,7 @@ from rex.persistence.models import (
     ClaimModel,
     EvidenceLinkModel,
     ExperimentModel,
+    HypothesisModel,
     ResearchRunModel,
     ResultModel,
 )
@@ -141,12 +143,45 @@ class ResearchVerifier:
         event_sink: EventSink | None = None,
         artifact_root: Path | str | None = None,
         tolerance: float = 1e-6,
+        self_deception_detector: ScientificSelfDeceptionDetector | None = None,
     ) -> None:
         self.session = session
         self.event_sink = event_sink if event_sink is not None else EventRepository(session)
         self.graph = EvidenceGraphService(session)
         self.artifact_root = Path(artifact_root) if artifact_root else None
         self.tolerance = tolerance
+        self.self_deception_detector = (
+            self_deception_detector
+            if self_deception_detector is not None
+            else ScientificSelfDeceptionDetector(significance_threshold=0.05)
+        )
+
+    @staticmethod
+    def _update_claim_status_fail_closed(claim: ClaimModel, new_status: str) -> None:
+        """Update claim status respecting fail-closed severity hierarchy (TAMPERED > REJECTED > INCONCLUSIVE)."""
+        if claim.status == ClaimStatus.TAMPERED.value:
+            return
+        if new_status == ClaimStatus.TAMPERED.value:
+            claim.status = ClaimStatus.TAMPERED.value
+        elif new_status == ClaimStatus.REJECTED.value:
+            claim.status = ClaimStatus.REJECTED.value
+        elif new_status == ClaimStatus.INCONCLUSIVE.value:
+            if claim.status != ClaimStatus.REJECTED.value:
+                claim.status = ClaimStatus.INCONCLUSIVE.value
+        else:
+            claim.status = new_status
+
+    @staticmethod
+    def _update_hypothesis_status_fail_closed(hyp: HypothesisModel, new_status: str) -> None:
+        """Update hypothesis status respecting fail-closed severity hierarchy (FALSIFIED > INCONCLUSIVE)."""
+        if hyp.status == HypothesisStatus.FALSIFIED.value:
+            return
+        if new_status == HypothesisStatus.FALSIFIED.value:
+            hyp.status = HypothesisStatus.FALSIFIED.value
+        elif new_status == HypothesisStatus.INCONCLUSIVE.value:
+            hyp.status = HypothesisStatus.INCONCLUSIVE.value
+        else:
+            hyp.status = new_status
 
     def verify_run(
         self,
@@ -268,6 +303,71 @@ class ResearchVerifier:
                 if num_err:
                     is_valid = False
                     errors.append(num_err)
+                    # VULN-M2-04: Automatic fail-closed hypothesis transition on numerical inconsistency
+                    rec_hyp_status = (
+                        HypothesisStatus.FALSIFIED.value
+                        if "CLAIM_DIRECTION_MISMATCH" in num_err
+                        else HypothesisStatus.INCONCLUSIVE.value
+                    )
+                    for exp in lineage.experiments:
+                        if exp.hypothesis_id:
+                            hyp_m = self.session.get(HypothesisModel, exp.hypothesis_id)
+                            if hyp_m:
+                                self._update_hypothesis_status_fail_closed(hyp_m, rec_hyp_status)
+                                self.session.flush()
+
+                # Check scientific self-deception and grounding
+                exp_spec = None
+                if lineage.experiments:
+                    exp_spec = lineage.experiments[0].specification_json
+
+                # VULN-M2-03: Gather all executions across lineage experiments to catch cherry-picking
+                all_exp_executions: list[Any] = []
+                seen_exec_ids: set[str] = set()
+                for exp in lineage.experiments:
+                    for ex in getattr(exp, "executions", []) or []:
+                        ex_id = getattr(ex, "id", None)
+                        if ex_id is not None and ex_id not in seen_exec_ids:
+                            seen_exec_ids.add(ex_id)
+                            all_exp_executions.append(ex)
+                        elif ex_id is None:
+                            all_exp_executions.append(ex)
+
+                for ex in lineage.executions:
+                    ex_id = getattr(ex, "id", None)
+                    if ex_id is not None and ex_id not in seen_exec_ids:
+                        seen_exec_ids.add(ex_id)
+                        all_exp_executions.append(ex)
+                    elif ex_id is None:
+                        all_exp_executions.append(ex)
+
+                audit = self.self_deception_detector.audit_claim(
+                    claim_statement=claim.statement,
+                    claim_metadata=dict(claim.metadata_json or {}),
+                    analyses=lineage.analyses,
+                    results=lineage.results,
+                    executions=all_exp_executions or lineage.executions,
+                    experiment_spec=exp_spec,
+                )
+                if not audit.is_grounded:
+                    is_valid = False
+                    for finding in audit.findings:
+                        errors.append(f"SELF_DECEPTION: {finding.description}")
+                        # Automatic fail-closed claim transition with hierarchy protection
+                        self._update_claim_status_fail_closed(
+                            claim, finding.recommended_claim_status.value
+                        )
+                        self.session.flush()
+
+                        # Automatic fail-closed hypothesis transition with hierarchy protection
+                        for exp in lineage.experiments:
+                            if exp.hypothesis_id:
+                                hyp_m = self.session.get(HypothesisModel, exp.hypothesis_id)
+                                if hyp_m:
+                                    self._update_hypothesis_status_fail_closed(
+                                        hyp_m, finding.recommended_hypothesis_status.value
+                                    )
+                                    self.session.flush()
 
             if is_valid and lineage.is_complete:
                 claim.status = ClaimStatus.VERIFIED.value
@@ -288,6 +388,13 @@ class ResearchVerifier:
             elif not is_valid:
                 if claim.status == ClaimStatus.VERIFIED.value:
                     claim.status = ClaimStatus.TAMPERED.value
+                    self.session.flush()
+                elif claim.status not in (
+                    ClaimStatus.REJECTED.value,
+                    ClaimStatus.INCONCLUSIVE.value,
+                    ClaimStatus.TAMPERED.value,
+                ):
+                    claim.status = ClaimStatus.REJECTED.value
                     self.session.flush()
 
             claims_checked.append(
@@ -566,6 +673,7 @@ class ResearchVerifier:
         comparative_words = {
             "improved",
             "improve",
+            "improves",
             "improvement",
             "increased",
             "increase",
@@ -583,6 +691,9 @@ class ResearchVerifier:
             "reduction",
             "outperformed",
             "outperform",
+            "outperforms",
+            "beats",
+            "exceeds",
             "better",
             "worse",
             "drop",
@@ -659,6 +770,9 @@ class ResearchVerifier:
         }
         increase_words = {
             "improved",
+            "improve",
+            "improves",
+            "improvement",
             "increase",
             "increased",
             "increasing",
@@ -669,8 +783,11 @@ class ResearchVerifier:
             "gained",
             "outperformed",
             "outperform",
+            "outperforms",
             "better",
             "superior",
+            "exceeds",
+            "beats",
         }
 
         # Check empirical deltas from analyses

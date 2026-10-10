@@ -34,6 +34,22 @@ class SingleHypothesisProposal(BaseModel):
     falsification_condition: str = Field(
         description="Concrete, quantitative condition that conclusively falsifies or refutes this hypothesis"
     )
+    independent_variables: list[str] = Field(
+        default_factory=list,
+        description="Independent experimental variables manipulated across conditions",
+    )
+    dependent_variables: list[str] = Field(
+        default_factory=list,
+        description="Dependent measurable outcome variables observed",
+    )
+    baseline_reference: str = Field(
+        default="",
+        description="Explicit baseline or control configuration compared against",
+    )
+    competing_hypothesis: str | None = Field(
+        default=None,
+        description="Explicit rival or competing alternative hypothesis offering a contrasting mechanism",
+    )
 
 
 class HypothesesListProposal(BaseModel):
@@ -131,3 +147,85 @@ class HypothesisAgent(BaseAgent):
                 generated_hypotheses.append(domain_hyp)
 
         return generated_hypotheses
+
+    def generate_competing_hypotheses(
+        self,
+        research_context: ResearchContext,
+        session: Session | None = None,
+        actor: ActorType = ActorType.RESEARCH_AGENT,
+    ) -> tuple[Hypothesis, Hypothesis]:
+        """Generate a pair of mutually competing hypotheses (HA vs HB) explaining the same phenomenon."""
+        system_prompt = (
+            "You are an expert AI/ML research scientist acting as the REX Hypothesis Generator.\n"
+            "Formulate two mutually competing, rival hypotheses (Primary H_A vs Alternative H_B) "
+            "that propose distinct mechanistic explanations for the target phenomenon.\n\n"
+            "REQUIREMENTS:\n"
+            "1. Both hypotheses must address the same dependent variable/outcome.\n"
+            "2. H_A and H_B must propose distinct, non-overlapping causal mechanisms or independent variables.\n"
+            "3. Both hypotheses must be explicitly falsifiable with quantitative criteria.\n"
+        )
+        user_prompt = (
+            f"### [RESEARCH PROBLEM]\n{research_context.problem_definition}\n\n"
+            f"### [DOMAIN]\n{research_context.task_domain}\n\n"
+            "Generate exactly 2 competing hypotheses."
+        )
+
+        request = LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            research_run_id=research_context.research_run_id,
+            action_name="competing_hypothesis_generation",
+            context={"mode": "competing_pair"},
+        )
+
+        proposal_list, _response = self._generate_structured(
+            request=request,
+            response_model=HypothesesListProposal,
+            session=session,
+            actor=actor,
+        )
+
+        if len(proposal_list.hypotheses) < 2:
+            raise ValueError("LLM failed to generate 2 competing hypotheses.")
+
+        p_a = proposal_list.hypotheses[0]
+        p_b = proposal_list.hypotheses[1]
+
+        if session is not None:
+            hyp_a = create_hypothesis(
+                session=session,
+                research_run_id=research_context.research_run_id,
+                statement=p_a.statement,
+                rationale=p_a.rationale,
+                expected_direction=p_a.expected_direction,
+                falsification_condition=p_a.falsification_condition,
+                actor=actor,
+                event_sink=self.event_sink,
+            )
+            hyp_b = create_hypothesis(
+                session=session,
+                research_run_id=research_context.research_run_id,
+                statement=p_b.statement,
+                rationale=p_b.rationale,
+                expected_direction=p_b.expected_direction,
+                falsification_condition=p_b.falsification_condition,
+                actor=actor,
+                event_sink=self.event_sink,
+            )
+        else:
+            hyp_a = Hypothesis(
+                research_run_id=research_context.research_run_id,
+                statement=p_a.statement,
+                rationale=p_a.rationale,
+                expected_direction=p_a.expected_direction,
+                falsification_condition=p_a.falsification_condition,
+            )
+            hyp_b = Hypothesis(
+                research_run_id=research_context.research_run_id,
+                statement=p_b.statement,
+                rationale=p_b.rationale,
+                expected_direction=p_b.expected_direction,
+                falsification_condition=p_b.falsification_condition,
+            )
+
+        return hyp_a, hyp_b

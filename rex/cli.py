@@ -441,6 +441,150 @@ def evaluate_cmd(
             raise typer.Exit(code=1)
 
 
+@cli.command("doctor")
+def doctor_cmd(
+    db_url: Annotated[
+        str | None,
+        typer.Option("--db", "-d", help="Database connection URL override."),
+    ] = None,
+) -> None:
+    """Run production SaaS readiness diagnostics and verify system environment."""
+    import platform
+    import sys
+
+    from sqlalchemy import text
+
+    from rex.config import get_settings
+
+    settings = get_settings()
+    console.print(
+        Panel(
+            "[bold cyan]REX SaaS Readiness & System Diagnostics (rex doctor)[/bold cyan]\n"
+            "Checking host environment, database integrity, file storage, and container readiness...",
+            title="REX Doctor",
+            border_style="cyan",
+        )
+    )
+
+    table = Table(title="Diagnostic Probes", show_header=True, header_style="bold magenta")
+    table.add_column("Component", style="cyan")
+    table.add_column("Probe", style="dim")
+    table.add_column("Status", style="bold")
+    table.add_column("Details")
+
+    # 1. Python version
+    py_ver = platform.python_version()
+    py_ok = sys.version_info >= (3, 11)
+    table.add_row(
+        "Python Runtime",
+        ">= 3.11",
+        "[green]PASS[/green]" if py_ok else "[red]FAIL[/red]",
+        f"v{py_ver} ({sys.executable})",
+    )
+
+    # 2. Database & WAL mode
+    engine = create_db_engine(database_url=db_url)
+    db_ok = False
+    wal_ok = False
+    journal_mode = "unknown"
+    db_err = None
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            db_ok = True
+            res = conn.execute(text("PRAGMA journal_mode")).scalar()
+            journal_mode = str(res).lower()
+            wal_ok = journal_mode == "wal"
+    except Exception as exc:  # noqa: BLE001
+        db_err = str(exc)
+
+    table.add_row(
+        "Database Probe",
+        "SELECT 1",
+        "[green]PASS[/green]" if db_ok else "[red]FAIL[/red]",
+        f"{engine.url}" if db_ok else f"Error: {db_err}",
+    )
+    table.add_row(
+        "SQLite WAL Mode",
+        "PRAGMA journal_mode=wal",
+        "[green]PASS[/green]" if wal_ok else "[yellow]WARN[/yellow]",
+        f"journal_mode={journal_mode}",
+    )
+
+    # 3. Workspace storage
+    ws_path = Path(settings.persistence.workspace_root)
+    ws_ok = False
+    try:
+        ws_path.mkdir(parents=True, exist_ok=True)
+        test_file = ws_path / ".doctor_probe_test"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink(missing_ok=True)
+        ws_ok = True
+    except Exception:  # noqa: BLE001, S110
+        pass
+    table.add_row(
+        "Workspace Root",
+        "Writable directory",
+        "[green]PASS[/green]" if ws_ok else "[red]FAIL[/red]",
+        str(ws_path.resolve()),
+    )
+
+    # 4. Artifact storage
+    art_path = Path(settings.persistence.artifact_root)
+    art_ok = False
+    try:
+        art_path.mkdir(parents=True, exist_ok=True)
+        test_file = art_path / ".doctor_probe_test"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink(missing_ok=True)
+        art_ok = True
+    except Exception:  # noqa: BLE001, S110
+        pass
+    table.add_row(
+        "Artifact Storage",
+        "Writable directory",
+        "[green]PASS[/green]" if art_ok else "[red]FAIL[/red]",
+        str(art_path.resolve()),
+    )
+
+    # 5. Docker daemon
+    docker_ok = False
+    docker_details = "Disabled in settings"
+    if settings.docker.enabled:
+        try:
+            import docker
+
+            client = docker.from_env()
+            docker_ok = bool(client.ping())
+            docker_details = "Daemon reachable"
+        except Exception as exc:  # noqa: BLE001
+            docker_details = f"Daemon unreachable: {exc}"
+    table.add_row(
+        "Docker Daemon",
+        "Container runtime",
+        "[green]PASS[/green]"
+        if docker_ok
+        else (
+            "[yellow]SKIPPED[/yellow]"
+            if not settings.docker.enabled
+            else "[yellow]UNAVAILABLE[/yellow]"
+        ),
+        docker_details,
+    )
+
+    console.print(table)
+
+    if not (py_ok and db_ok and ws_ok and art_ok):
+        console.print(
+            "[bold red]Diagnostics detected critical system errors. Check probes above.[/bold red]"
+        )
+        raise typer.Exit(code=1)
+
+    console.print(
+        "[bold green]All critical system diagnostics passed. REX is ready for production research execution.[/bold green]"
+    )
+
+
 @cli.command("serve")
 def serve_cmd(
     host: Annotated[

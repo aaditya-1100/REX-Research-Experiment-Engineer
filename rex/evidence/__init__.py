@@ -38,6 +38,12 @@ from rex.evidence.reproduce import (
     ReproductionOutcome,
     ReproductionReport,
 )
+from rex.evidence.self_deception import (
+    ScientificSelfDeceptionDetector,
+    SelfDeceptionAuditReport,
+    SelfDeceptionFinding,
+    SelfDeceptionType,
+)
 from rex.evidence.verifier import (
     AnalysisRecomputationResult,
     ClaimVerificationResult,
@@ -68,6 +74,10 @@ __all__ = [
     "ReproductionOutcome",
     "ReproductionReport",
     "ResearchVerifier",
+    "ScientificSelfDeceptionDetector",
+    "SelfDeceptionAuditReport",
+    "SelfDeceptionFinding",
+    "SelfDeceptionType",
     "UnauthorizedClaimError",
     "UnsupportedClaimError",
     "VerificationReport",

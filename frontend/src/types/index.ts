@@ -22,6 +22,7 @@ export type ResearchStatus =
   | "PIVOT"
   | "STOP"
   | "PAUSED"
+  | "CANCELLED"
   | "COMPLETE"
   | "FAILED";
 

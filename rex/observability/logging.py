@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 from collections.abc import Mapping
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any, ClassVar, TextIO
 
@@ -17,6 +18,18 @@ from rex.observability.events import (
     ResearchEvent,
     sanitize_value,
 )
+
+correlation_id_ctx: ContextVar[str] = ContextVar("correlation_id", default="")
+
+
+def get_correlation_id() -> str:
+    """Return the current task's correlation ID or empty string."""
+    return correlation_id_ctx.get()
+
+
+def set_correlation_id(correlation_id: str) -> None:
+    """Set the current task's correlation ID."""
+    correlation_id_ctx.set(correlation_id)
 
 
 class JsonFormatter(logging.Formatter):
@@ -52,6 +65,7 @@ class JsonFormatter(logging.Formatter):
         "execution_id",
         "actor",
         "payload",
+        "correlation_id",
     }
 
     def format(self, record: logging.LogRecord) -> str:
@@ -70,6 +84,11 @@ class JsonFormatter(logging.Formatter):
             val = getattr(record, field, None)
             if val is not None:
                 log_entry[field] = str(val.value) if hasattr(val, "value") else str(val)
+
+        # Include correlation_id if set on record or in current context
+        corr_id = getattr(record, "correlation_id", None) or get_correlation_id()
+        if corr_id:
+            log_entry["correlation_id"] = str(corr_id)
 
         # Include sanitized payload if present
         payload = getattr(record, "payload", None)
@@ -129,6 +148,7 @@ class StructuredLogger(logging.LoggerAdapter):
             "execution_id",
             "actor",
             "payload",
+            "correlation_id",
         ):
             if key in kwargs:
                 extra[key] = kwargs.pop(key)

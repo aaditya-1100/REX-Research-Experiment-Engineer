@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from rex.execution.canaries import scrub_logs_and_credentials
 from rex.persistence.models import (
     ArtifactModel,
     ExecutionModel,
+    ExperimentModel,
     ResultModel,
 )
 
@@ -33,12 +34,21 @@ executions_router = APIRouter(prefix="/executions", tags=["executions"])
 @router.get("/{execution_id}", response_model=ExecutionResponse)
 def get_execution(
     execution_id: str,
+    run_id: str | None = Query(None, alias="run_id"),
     session: Session = Depends(get_db),
 ) -> ExecutionResponse:
     """Retrieve full execution telemetry and provenance hashes."""
     model = session.get(ExecutionModel, execution_id)
     if not model:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found.")
+
+    if run_id is not None:
+        exp = session.get(ExperimentModel, model.experiment_id)
+        if not exp or exp.research_run_id != run_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Execution '{execution_id}' not found in research run '{run_id}'.",
+            )
 
     duration = None
     if model.started_at and model.finished_at:
